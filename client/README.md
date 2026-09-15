@@ -48,3 +48,12 @@ This compiles the portable Swift sources and runs 12 mock-HTTP checks with the
 installed macOS command-line tools. It does not test UIKit, GoogleSignIn,
 real OAuth, iPhone launch or an actual game trade. XCTest files are included
 for environments with the full developer tools; they were not run here.
+
+## Legacy collection reader
+
+`LegacyCollectionSnapshot` reads the statically mapped `bXlJZHM=` preferences
+entry as a card-ID-to-duplicate-count dictionary. Zero means a retained owned
+card with no duplicates; only positive counts become tradeable cards. Missing
+or malformed data fails. This reader does not write saves or upload inventory.
+It has fixture checks but still needs real device-save validation. Coin storage
+and reconciling the in-memory game collection remain unfinished.

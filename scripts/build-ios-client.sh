@@ -10,6 +10,7 @@ xcrun --sdk iphoneos swiftc -parse-as-library -swift-version 5 \
   -emit-module-path "$revival_output/RevivalTradingClient.swiftmodule" \
   "$revival_root/client/Sources/RevivalTradingClient/TradingClient.swift" \
   "$revival_root/client/Sources/RevivalTradingClient/FirebaseRESTAuthentication.swift" \
+  "$revival_root/client/Sources/RevivalTradingClient/LegacyCollectionSnapshot.swift" \
   -o "$revival_output/libRevivalTradingClient.a"
 xcrun lipo -info "$revival_output/libRevivalTradingClient.a"
 cat > "$revival_output/README.txt" <<'INFO'

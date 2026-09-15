@@ -1,0 +1,26 @@
+name: Build ESign launch-test module
+on:
+  push:
+    branches: [main]
+    paths:
+      - client/bootstrap/**
+      - scripts/build-bootstrap.sh
+      - .github/workflows/bootstrap.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bootstrap:
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/build-bootstrap.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revival-launch-test-module
+          path: build/bootstrap/
+          retention-days: 7
+          if-no-files-found: error

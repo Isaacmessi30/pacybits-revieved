@@ -15,3 +15,5 @@ analysis/strings.txt
 
 build/
 GoogleService-Info.plist
+
+dist/

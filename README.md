@@ -37,3 +37,22 @@ Connect GoogleSignIn and URL callbacks, map the original collection storage,
 connect the game screens to the API, reconcile committed inventory, package an
 unsigned IPA, then sign using ESign and test on real devices. Building a client
 library alone does not establish that the game works.
+
+## First ESign launch test
+
+`Build ESign launch-test module` compiles a small native module that adds a
+**Revival test** status button inside the game. It does not change saves,
+authentication or networking. `scripts/package-test-ipa.py` packages the exact
+inspected original IPA and the module into a separate test app. The original
+IPA is kept locally and is not in this repository.
+
+```sh
+python3 scripts/package-test-ipa.py 'FUT20DRAFT 2.ipa' build/bootstrap/RevivalBootstrap.dylib dist/Pacybits-Revival-Launch-Test-1.ipa
+```
+
+This uses the original unencrypted arm64 slice, adds a dylib load command only
+in verified empty header padding, and sets the separate test bundle ID to
+`com.pacybitsrevival.fut20.launchtest`. Minimum iOS is 15. Sign the output with
+ESign. The archive has no valid final signature until ESign signs it.
+The test app has separate storage and does not import the original collection.
+**This test does not restore trading or connect Google login.**

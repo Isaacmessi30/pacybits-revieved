@@ -33,6 +33,12 @@ jobs:
         run: swift test --package-path client
       - name: Compile unsigned iPhone client library
         run: bash scripts/build-ios-client.sh
+      - name: Compile Google login coordinator with iPhone SDK
+        working-directory: client/ios
+        run: >-
+          xcodebuild -scheme RevivalGoogleLogin -destination 'generic/platform=iOS'
+          -derivedDataPath ../../build/google-login
+          CODE_SIGNING_ALLOWED=NO build
       - uses: actions/upload-artifact@v4
         with:
           name: iphone-client-library-not-an-ipa

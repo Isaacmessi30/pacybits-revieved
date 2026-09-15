@@ -12,8 +12,8 @@ GitHub, so Xcode is not required on your computer.
 
 The workflow runs backend unit tests, portable Swift checks, XCTest, and an
 arm64 iPhone SDK compile targeting iOS 15. Its downloadable artifact is an
-**unsigned static client library, not an installable IPA**. The Google login
-coordinator still needs a host integration build and dependency resolution.
+**unsigned static client library, not an installable IPA**. The workflow also compiles the Google login coordinator against GoogleSignIn
+9.0.0. Wiring it into the original game and testing real login remain required.
 
 No signing certificate, Firebase service-account key or production credentials
 are needed by this workflow. There is no cloud deployment. Artifacts expire

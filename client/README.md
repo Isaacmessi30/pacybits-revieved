@@ -11,8 +11,8 @@ Target: iOS 15 or later. Actual iPhone compatibility remains untested.
   Google ID token for a Firebase session and coalesces token refreshes. Tokens
   stay in memory. Restarting the app requires signing in again.
 - `ios/GoogleLoginCoordinator.swift`: host integration source using the official
-  GoogleSignIn SDK. It needs the iPhone SDK and is not included in the macOS
-  checks. The installed bundle ID must match the supplied plist, and the host
+  GoogleSignIn SDK. Its separate Swift package pins GoogleSignIn 9.0.0 and
+  is built with the iPhone SDK in GitHub Actions. The installed bundle ID must match the supplied plist, and the host
   must forward the registered reversed-client-ID URL callback.
 
 The existing IPA already includes Firebase Core and Database. This source uses

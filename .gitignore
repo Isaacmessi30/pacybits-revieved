@@ -1,0 +1,17 @@
+node_modules/
+.firebase/
+*-debug.log
+analysis/*binary
+analysis/*disassembly.txt
+analysis/objc-metadata.txt
+analysis/symbols.txt
+analysis/strings.txt
+*.ipa
+*.mobileprovision
+*.p12
+*service-account*.json
+.build/
+.swiftpm/
+
+build/
+GoogleService-Info.plist

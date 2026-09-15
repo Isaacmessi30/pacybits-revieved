@@ -1,0 +1,41 @@
+name: Client build and backend checks
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: revival-build-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm --prefix backend test
+  ios-client:
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Developer tools
+        run: xcodebuild -version
+      - name: Portable client checks
+        run: bash scripts/check-client.sh
+      - name: XCTest suite
+        run: swift test --package-path client
+      - name: Compile unsigned iPhone client library
+        run: bash scripts/build-ios-client.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iphone-client-library-not-an-ipa
+          path: build/ios-client/
+          if-no-files-found: error
+          retention-days: 7

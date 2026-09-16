@@ -9,6 +9,7 @@ xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=15.0 \
   -c "$revival_root/client/bootstrap/RevivalBootstrap.m" -o "$revival_output/bootstrap.o"
 xcrun --sdk iphoneos swiftc -parse-as-library -swift-version 5 \
   -sdk "$revival_sdk" -target arm64-apple-ios15.0 -module-name PBRRevival \
+  -import-objc-header "$revival_root/client/bootstrap/RevivalRuntime.h" \
   -emit-library -Xlinker -install_name -Xlinker @executable_path/Frameworks/RevivalBootstrap.dylib \
   -framework UIKit -framework Foundation -framework GameKit \
   "$revival_root/client/Sources/RevivalTradingClient/TradingClient.swift" \

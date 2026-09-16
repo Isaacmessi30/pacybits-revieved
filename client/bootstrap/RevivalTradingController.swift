@@ -18,6 +18,7 @@ final class RevivalTradingController: UITableViewController {
     private var timer: Timer?
     private var renewed = Date.distantPast
     private var gameID: String?
+    private var labels: [String:String] = [:]
     private var lastRoom: String? {
         get { UserDefaults.standard.string(forKey: "RevivalActiveRoom") }
         set { UserDefaults.standard.set(newValue, forKey: "RevivalActiveRoom") }
@@ -111,6 +112,18 @@ final class RevivalTradingController: UITableViewController {
         ledger = storage; api = client
         try await refresh()
     }
+    private func label(_ id: String) -> String {
+        if let value = labels[id] { return value }
+        let value = PBRCardLabel(id) ?? "Card \(id)"
+        labels[id] = value
+        return value
+    }
+    private func checkOffer(_ offer: TradeOffer) throws {
+        guard let local = try ledger?.bridge.snapshot(), local.coins >= offer.coins,
+              offer.cards.allSatisfy({ (local.cards[$0] ?? 0) > 1 }) else {
+            throw RevivalFailure("You no longer have these coins or duplicates in the game. Change your offer.")
+        }
+    }
     private func checkPlayer() throws {
         guard GKLocalPlayer.local.isAuthenticated, GKLocalPlayer.local.gamePlayerID == gameID else {
             throw RevivalFailure("Game Center account changed. Close Trading and sign in again.")
@@ -188,11 +201,11 @@ final class RevivalTradingController: UITableViewController {
         if path.section == 2, let room = room {
             let member = room.members[path.row], offer = room.offers[member]
             cell.textLabel?.text = member == room.selfKey ? "You" : "Partner"
-            cell.detailTextLabel?.text = "\(offer?.coins ?? 0) coins\n\((offer?.cards ?? []).joined(separator: ", "))"
+            cell.detailTextLabel?.text = "\(offer?.coins ?? 0) coins\n\((offer?.cards ?? []).map { label($0) }.joined(separator: ", "))"
         }
         if path.section == 3 {
             let id = availableCards[path.row]
-            cell.textLabel?.text = "Card \(id)"
+            cell.textLabel?.text = label(id)
             cell.detailTextLabel?.text = "\((inventory?.cards[id] ?? 1) - 1) duplicates"
             cell.accessoryType = selected.contains(id) ? .checkmark : .none
         }
@@ -216,13 +229,13 @@ final class RevivalTradingController: UITableViewController {
                 guard let amount = Int(value), amount >= 0, amount <= (self.inventory?.coins ?? 0) else { return }
                 self.coins = amount; self.message = "Offer: \(amount) coins. Tap Send offer to update it."; self.tableView.reloadData()
             }
-            case 2: run { try self.checkPlayer(); self.accept(try await client.updateOffer(room: room, offer: TradeOffer(coins: self.coins, cards: Array(self.selected)))); try await self.refresh() }
+            case 2: run { try self.checkPlayer(); try self.checkOffer(TradeOffer(coins: self.coins, cards: Array(self.selected))); self.accept(try await client.updateOffer(room: room, offer: TradeOffer(coins: self.coins, cards: Array(self.selected)))); try await self.refresh() }
             case 3: run { try self.checkPlayer(); self.accept(try await client.ready(room: room)); try await self.refresh() }
             default:
                 let alert = UIAlertController(title: "Confirm this trade?", message: "Your offer: \(room.offers[room.selfKey]?.coins ?? 0) coins and \(room.offers[room.selfKey]?.cards.joined(separator: ", ") ?? "no cards"). Both players must confirm the same offers.", preferredStyle: .alert)
                 alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
                 alert.addAction(UIAlertAction(title: "Confirm", style: .default) { _ in self.run {
-                    try self.checkPlayer(); self.accept(try await client.confirm(room: room)); try await self.refresh()
+                    try self.checkPlayer(); if let offer = room.offers[room.selfKey] { try self.checkOffer(offer) }; self.accept(try await client.confirm(room: room)); try await self.refresh()
                 } })
                 present(alert, animated: true)
             }

@@ -95,3 +95,17 @@ __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
         [[PBRRevivalBootstrap shared] attach];
     });
 }
+
+NSString *PBRCardLabel(NSString *identifier) {
+    @try {
+        Class player = NSClassFromString(@"_TtC13PACYBITSFUT206Player");
+        SEL lookup = NSSelectorFromString(@"objectForPrimaryKey:");
+        if (![player respondsToSelector:lookup]) return nil;
+        id object = ((id (*)(id, SEL, id))objc_msgSend)(player, lookup, identifier);
+        if (!object) return nil;
+        NSString *name = [object valueForKey:@"name"];
+        NSNumber *rating = [object valueForKey:@"rating"];
+        if (![name isKindOfClass:NSString.class]) return nil;
+        return [NSString stringWithFormat:@"%@ %@", rating ?: @"", name];
+    } @catch (NSException *exception) { return nil; }
+}

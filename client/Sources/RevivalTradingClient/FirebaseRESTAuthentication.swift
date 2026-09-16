@@ -48,7 +48,7 @@ private struct RefreshResponse: Decodable {
 }
 
 /// Uses Firebase's HTTPS API, avoiding a second Firebase runtime inside the legacy IPA.
-/// Sessions are memory-only for now: relaunch requires Google sign-in again.
+/// Sessions are memory-only for now: relaunch requires sign-in again.
 public actor FirebaseRESTAuthentication {
     private let apiKey: String
     private let transport: TradingHTTPTransport
@@ -75,6 +75,41 @@ public actor FirebaseRESTAuthentication {
             // Firebase's native credential exchange parameter; not an OAuth browser redirect.
             "requestUri": "http://localhost",
             "returnSecureToken": true
+        ])
+        let (data, http) = try await transport.send(request)
+        guard version == generation else { throw FirebaseAuthenticationError.sessionChanged }
+        guard http.statusCode == 200 else { throw FirebaseAuthenticationError.rejected(status: http.statusCode) }
+        guard data.count <= 65536, let response = try? JSONDecoder().decode(SignInResponse.self, from: data) else {
+            throw FirebaseAuthenticationError.invalidResponse
+        }
+        let session = try Self.makeSession(uid: response.localId, token: response.idToken,
+                                          refresh: response.refreshToken, expiry: response.expiresIn)
+        cached = session
+        return session.publicSession
+    }
+
+    /// Firebase verifies Apple's fresh signature. A nickname alone is never a credential.
+    public func signIn(gameCenter credential: GameCenterCredential, bundleID: String) async throws -> FirebaseSession {
+        guard !bundleID.isEmpty, !credential.teamPlayerID.isEmpty, !credential.gamePlayerID.isEmpty,
+              credential.publicKeyURL.scheme == "https", !credential.signature.isEmpty,
+              !credential.salt.isEmpty, credential.timestamp > 0 else {
+            throw FirebaseAuthenticationError.invalidConfiguration
+        }
+        signOut()
+        let version = generation
+        var request = URLRequest(url: endpoint("https://identitytoolkit.googleapis.com/v1/accounts:signInWithGameCenter"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(bundleID, forHTTPHeaderField: "x-ios-bundle-identifier")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "playerId": credential.playerID,
+            "teamPlayerId": credential.teamPlayerID,
+            "gamePlayerId": credential.gamePlayerID,
+            "publicKeyUrl": credential.publicKeyURL.absoluteString,
+            "signature": credential.signature.base64EncodedString(),
+            "salt": credential.salt.base64EncodedString(),
+            "timestamp": String(credential.timestamp),
+            "displayName": credential.displayName
         ])
         let (data, http) = try await transport.send(request)
         guard version == generation else { throw FirebaseAuthenticationError.sessionChanged }
@@ -151,5 +186,28 @@ public actor FirebaseRESTAuthentication {
             key.addingPercentEncoding(withAllowedCharacters: allowed)! + "="
             + values[key]!.addingPercentEncoding(withAllowedCharacters: allowed)!
         }.joined(separator: "&")
+    }
+}
+
+public struct GameCenterCredential: Sendable {
+    public let playerID: String
+    public let teamPlayerID: String
+    public let gamePlayerID: String
+    public let publicKeyURL: URL
+    public let signature: Data
+    public let salt: Data
+    public let timestamp: UInt64
+    public let displayName: String
+
+    public init(playerID: String = "", teamPlayerID: String, gamePlayerID: String,
+                publicKeyURL: URL, signature: Data, salt: Data, timestamp: UInt64, displayName: String) {
+        self.playerID = playerID
+        self.teamPlayerID = teamPlayerID
+        self.gamePlayerID = gamePlayerID
+        self.publicKeyURL = publicKeyURL
+        self.signature = signature
+        self.salt = salt
+        self.timestamp = timestamp
+        self.displayName = displayName
     }
 }

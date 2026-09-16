@@ -21,7 +21,7 @@ test('shared service verifies revocation and registers only the authenticated id
   assert.equal(result.body.inventoryReady, false);
   assert.deepEqual(f.verified, [['token', true]]);
 });
-test('shared service rejects absent, invalid, unverified and non-Google identities', async () => {
+test('shared service rejects absent, invalid, unverified and unsupported identities', async () => {
   assert.equal((await fixture().trade({ body: {}, byteLength: 2 })).status, 401);
   for (const [identity, status] of [
     [null, 401],
@@ -34,4 +34,12 @@ test('shared service limits ordinary requests and allows bounded legacy imports'
   assert.equal((await f.trade({ body: { action: 'status' }, byteLength: 4097 })).status, 413);
   assert.equal((await f.trade({ body: { action: 'importLegacyInventory' }, byteLength: 262145 })).status, 413);
   assert.equal(f.verified.length, 0);
+});
+
+test('verified Game Center tokens need no email; caller cannot spoof the provider', async () => {
+  const gc = fixture({ uid: 'game-player', firebase: { sign_in_provider: 'gc.apple.com' } });
+  assert.equal((await gc.trade({ authorization: 'Bearer token', body: { action: 'register' }, byteLength: 21 })).status, 200);
+  assert.deepEqual(gc.verified, [['token', true]]);
+  const custom = fixture({ uid: 'game-player', firebase: { sign_in_provider: 'custom' } });
+  assert.equal((await custom.trade({ authorization: 'Bearer token', body: { action: 'register', provider: 'gc.apple.com' }, byteLength: 80 })).status, 403);
 });

@@ -11,8 +11,11 @@ export function createTradingService({ auth, database, logError = console.error 
     let identity;
     try { identity = await auth.verifyIdToken(match[1], true); }
     catch { return { status: 401, body: { error: 'INVALID_SESSION' } }; }
-    if (identity.firebase?.sign_in_provider !== 'google.com' || identity.email_verified !== true) {
-      return { status: 403, body: { error: 'VERIFIED_GOOGLE_ACCOUNT_REQUIRED' } };
+    const provider = identity.firebase?.sign_in_provider;
+    const allowed = provider === 'gc.apple.com'
+      || (provider === 'google.com' && identity.email_verified === true);
+    if (!allowed) {
+      return { status: 403, body: { error: 'SUPPORTED_VERIFIED_ACCOUNT_REQUIRED' } };
     }
     const id = randomUUID(), now = Date.now();
     let outcome;

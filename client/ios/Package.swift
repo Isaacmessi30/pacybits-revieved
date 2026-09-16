@@ -13,6 +13,6 @@ let package = Package(
         .target(name: "RevivalGoogleLogin", dependencies: [
             .product(name: "RevivalTradingClient", package: "RevivalTradingClient"),
             .product(name: "GoogleSignIn", package: "GoogleSignIn-iOS")
-        ], path: ".", sources: ["GoogleLoginCoordinator.swift"])
+        ], path: ".", sources: ["GoogleLoginCoordinator.swift", "GameCenterLoginCoordinator.swift"])
     ]
 )

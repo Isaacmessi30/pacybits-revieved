@@ -107,6 +107,26 @@ struct ClientChecks {
                 let count = await http.requests.count
                 try check(count == 1, "Valid token unnecessarily refreshed")
             }),
+            ("Game Center exchange binds bundle and encodes Apple proof", {
+                let http = CheckTransport([(200, signInBody())])
+                let auth = try FirebaseRESTAuthentication(apiKey: "test-key", transport: http)
+                let proof = GameCenterCredential(teamPlayerID: "team", gamePlayerID: "game",
+                    publicKeyURL: URL(string: "https://static.gc.apple.com/key")!,
+                    signature: Data([0, 255]), salt: Data([1, 2]), timestamp: 123456789,
+                    displayName: "Player")
+                let result = try await auth.signIn(gameCenter: proof, bundleID: "com.example.game")
+                try check(result.uid == "alice", "Firebase identity missing")
+                let requests = await http.requests
+                let request = requests[0]
+                try check(request.url?.path == "/v1/accounts:signInWithGameCenter", "Wrong exchange")
+                try check(request.value(forHTTPHeaderField: "x-ios-bundle-identifier") == "com.example.game", "Missing bundle binding")
+                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+                try check(body["signature"] == "AP8=" && body["salt"] == "AQI=", "Bad proof encoding")
+                try check(body["timestamp"] == "123456789" && body["gamePlayerId"] == "game", "Wrong proof fields")
+                await auth.signOut()
+                do { _ = try await auth.session(); throw CheckFailure.failed("Game Center session survived logout") }
+                catch FirebaseAuthenticationError.signInRequired {}
+            }),
             ("concurrent callers share one token refresh", {
                 let http = CheckTransport([(200, signInBody(expiry: 1)), (200, refreshBody)], delay: 20_000_000)
                 let auth = try FirebaseRESTAuthentication(apiKey: "test-key", transport: http)

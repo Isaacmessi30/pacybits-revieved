@@ -98,7 +98,7 @@ function validOffer(input) {
 function owns(a, offer) {
   requireValue(a.coins >= offer.coins, 'INSUFFICIENT_COINS', 409);
   for (const card of offer.cards) {
-    requireValue(Object.hasOwn(a.cards, card) && integer(a.cards[card], 1, MAX_COPIES), 'CARD_NOT_OWNED', 409);
+    requireValue(Object.hasOwn(a.cards, card) && integer(a.cards[card], a.preserveFirstCopy === true ? 2 : 1, MAX_COPIES), 'CARD_NOT_OWNED', 409);
   }
 }
 function settle(state, room, now) {
@@ -143,6 +143,7 @@ function execute(state, key, input, now, id) {
         'INVENTORY_ALREADY_INITIALIZED', 409);
       requireValue(!a.activeRoom && !state.queue[key], 'ACCOUNT_BUSY', 409);
       requireValue(plain(input.inventory) && Object.keys(input.inventory).sort().join(',') === 'cards,coins', 'INVALID_INVENTORY');
+      requireValue(input.preserveFirstCopy === undefined || typeof input.preserveFirstCopy === 'boolean', 'INVALID_INVENTORY');
       const { coins, cards } = input.inventory;
       requireValue(integer(coins, 0, MAX_COINS) && plain(cards), 'INVALID_INVENTORY');
       requireValue(Object.keys(cards).length <= 30000, 'INVENTORY_TOO_LARGE');
@@ -156,6 +157,7 @@ function execute(state, key, input, now, id) {
       a.inventoryReady = true;
       a.inventoryImportedAt = now;
       a.inventoryOrigin = 'legacy-client-unverified';
+      a.preserveFirstCopy = input.preserveFirstCopy === true;
       return { inventory: { coins: a.coins, cards: a.cards }, inventoryReady: true, inventoryVersion: 1 };
     }
     case 'status': {
@@ -164,7 +166,7 @@ function execute(state, key, input, now, id) {
         : a.activeRoom ? state.rooms[a.activeRoom] : null;
       return { room: room ? view(room, key) : null, queued: Boolean(state.queue[key]),
         inventory: { coins: a.coins, cards: a.cards }, inventoryReady: a.inventoryReady !== false,
-        inventoryVersion: a.inventoryVersion ?? 0, inventoryOrigin: a.inventoryOrigin ?? 'server' };
+        inventoryVersion: a.inventoryVersion ?? 0, inventoryOrigin: a.inventoryOrigin ?? 'server', preserveFirstCopy: a.preserveFirstCopy === true };
     }
     case 'invite': {
       available(state, key, now);
@@ -256,7 +258,7 @@ export function transition(current, uid, input, now, newRoomId) {
     rateLimit(a, now, input.action);
     requireValue(ACTIONS.has(input.action), 'UNKNOWN_ACTION');
     const fields = {
-      register: ['action'], importLegacyInventory: ['action', 'inventory'],
+      register: ['action'], importLegacyInventory: ['action', 'inventory', 'preserveFirstCopy'],
       status: ['action', 'roomId'], invite: ['action'], join: ['action', 'roomId'],
       queue: ['action'], leaveQueue: ['action'], cancel: ['action', 'roomId'],
       offer: ['action', 'roomId', 'revision', 'offer'],

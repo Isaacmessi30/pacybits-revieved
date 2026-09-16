@@ -3,13 +3,20 @@ set -euo pipefail
 revival_root="$(cd "$(dirname "$0")/.." && pwd)"
 revival_output="$revival_root/build/bootstrap"
 mkdir -p "$revival_output"
+revival_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
 xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=15.0 \
-  -isysroot "$(xcrun --sdk iphoneos --show-sdk-path)" \
-  -fobjc-arc -fmodules -Wall -Wextra -Werror -Wno-unused-parameter \
-  -dynamiclib -framework UIKit -framework Foundation \
-  -Wl,-install_name,@executable_path/Frameworks/RevivalBootstrap.dylib \
-  "$revival_root/client/bootstrap/RevivalBootstrap.m" \
-  -o "$revival_output/RevivalBootstrap.dylib"
+  -isysroot "$revival_sdk" -fobjc-arc -fmodules -Wall -Wextra -Werror -Wno-unused-parameter \
+  -c "$revival_root/client/bootstrap/RevivalBootstrap.m" -o "$revival_output/bootstrap.o"
+xcrun --sdk iphoneos swiftc -parse-as-library -swift-version 5 \
+  -sdk "$revival_sdk" -target arm64-apple-ios15.0 -module-name PBRRevival \
+  -emit-library -Xlinker -install_name -Xlinker @executable_path/Frameworks/RevivalBootstrap.dylib \
+  -framework UIKit -framework Foundation -framework GameKit \
+  "$revival_root/client/Sources/RevivalTradingClient/TradingClient.swift" \
+  "$revival_root/client/Sources/RevivalTradingClient/FirebaseRESTAuthentication.swift" \
+  "$revival_root/client/bootstrap/LegacyInventoryBridge.swift" \
+  "$revival_root/client/bootstrap/RevivalTradingController.swift" \
+  "$revival_output/bootstrap.o" -o "$revival_output/RevivalBootstrap.dylib"
+rm "$revival_output/bootstrap.o"
 xcrun lipo -info "$revival_output/RevivalBootstrap.dylib"
 # Base64 is a transport copy for fetching this small build through the GitHub API.
 base64 < "$revival_output/RevivalBootstrap.dylib" > "$revival_output/RevivalBootstrap.dylib.base64"

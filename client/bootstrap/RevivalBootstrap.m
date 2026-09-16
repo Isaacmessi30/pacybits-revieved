@@ -1,7 +1,8 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 
-// A launch probe only. It does not change saves, trading, authentication or networking.
+// Entry point for the revival trading client.
 @interface PBRRevivalBootstrap : NSObject
 @property(nonatomic, strong) UIButton *button;
 + (instancetype)shared;
@@ -39,12 +40,12 @@
     [self.button removeFromSuperview];
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     self.button = button;
-    [button setTitle:@"Revival test" forState:UIControlStateNormal];
+    [button setTitle:@"Trading" forState:UIControlStateNormal];
     [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     button.backgroundColor = [UIColor colorWithRed:0.16 green:0.22 blue:0.55 alpha:0.95];
     button.titleLabel.font = [UIFont boldSystemFontOfSize:13];
     button.layer.cornerRadius = 12;
-    button.accessibilityLabel = @"Open revival test status";
+    button.accessibilityLabel = @"Open revival trading";
     button.translatesAutoresizingMaskIntoConstraints = NO;
     [button addTarget:self action:@selector(showStatus) forControlEvents:UIControlEventTouchUpInside];
     [window addSubview:button];
@@ -58,19 +59,31 @@
 - (void)showStatus {
     UIViewController *presenter = [self gameWindow].rootViewController;
     while (presenter.presentedViewController) presenter = presenter.presentedViewController;
-    if (!presenter || [presenter isKindOfClass:UIAlertController.class]) return;
-    NSString *message = [NSString stringWithFormat:
-        @"The revival module loaded inside the game.\n\niOS %@\nBundle: %@\n\nThis is a launch test. Google login and restored trading are not connected yet.\n\nThis separate test app does not import your original collection.",
-        UIDevice.currentDevice.systemVersion, NSBundle.mainBundle.bundleIdentifier];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Revival launch test 1"
-        message:message preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Continue" style:UIAlertActionStyleDefault handler:nil]];
-    [presenter presentViewController:alert animated:YES completion:nil];
+    if (!presenter || [presenter isKindOfClass:UIAlertController.class] ||
+        [NSStringFromClass(presenter.class) isEqualToString:@"PBRTradingController"] ||
+        ([presenter isKindOfClass:UINavigationController.class] &&
+         [NSStringFromClass(((UINavigationController *)presenter).topViewController.class) isEqualToString:@"PBRTradingController"])) return;
+    Class controller = NSClassFromString(@"PBRTradingController");
+    SEL open = NSSelectorFromString(@"openFrom:");
+    if ([controller respondsToSelector:open]) {
+        ((void (*)(id, SEL, UIViewController *))objc_msgSend)(controller, open, presenter);
+    }
 }
+
 @end
+
+static void PBRTradeMenuTap(id receiver, SEL selector, id gesture) {
+    [[PBRRevivalBootstrap shared] showStatus];
+}
 
 __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
+        Class menu = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
+        SEL tap = NSSelectorFromString(@"buttonTapHandlerWithGesture:");
+        Method method = class_getInstanceMethod(menu, tap);
+        if (method && method_getNumberOfArguments(method) == 3) {
+            class_replaceMethod(menu, tap, (IMP)PBRTradeMenuTap, method_getTypeEncoding(method));
+        }
         [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification
             object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notification) {
                 [[PBRRevivalBootstrap shared] attach];

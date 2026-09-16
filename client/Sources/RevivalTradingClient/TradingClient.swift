@@ -51,6 +51,7 @@ public struct TradingResponse: Decodable, Sendable {
     public let inventoryReady: Bool?
     public let inventoryVersion: Int?
     public let inventoryOrigin: String?
+    public let preserveFirstCopy: Bool?
 }
 
 public enum TradingClientError: Error, Equatable {
@@ -97,6 +98,7 @@ private struct TradeRequest: Encodable {
     var revision: Int?
     var offer: TradeOffer?
     var inventory: TradeInventory?
+    var preserveFirstCopy: Bool?
 }
 private struct ErrorResponse: Decodable { let error: String }
 
@@ -138,8 +140,8 @@ public actor TradingClient {
         try await send(TradeRequest(action: "register"))
     }
     /// One-time migration of tradeable duplicate counts, not the full card collection.
-    public func importLegacyInventory(_ inventory: TradeInventory) async throws -> TradingResponse {
-        try await send(TradeRequest(action: "importLegacyInventory", inventory: inventory))
+    public func importLegacyInventory(_ inventory: TradeInventory, preserveFirstCopy: Bool = false) async throws -> TradingResponse {
+        try await send(TradeRequest(action: "importLegacyInventory", inventory: inventory, preserveFirstCopy: preserveFirstCopy ? true : nil))
     }
     public func createInvitation() async throws -> TradingResponse {
         try await send(TradeRequest(action: "invite"))

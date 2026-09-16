@@ -237,3 +237,26 @@ test('register and import cannot remove bans or overwrite established trading ba
   assert.equal(f.call('bob', { action: 'importLegacyInventory', inventory: { coins: 999, cards: {} } }).status, 409);
   assert.equal(f.state.accounts[accountKey('bob')].coins, 100);
 });
+
+test('full-collection import preserves first copies, including newly received cards', () => {
+  let state = null, now = 100000;
+  const call = (uid, input) => {
+    const result = transition(state, uid, input, now += 4000, 'first-copy-room');
+    state = result.state;
+    return result;
+  };
+  for (const uid of ['alice', 'bob']) {
+    assert.equal(call(uid, { action: 'register' }).status, 200);
+    assert.equal(call(uid, { action: 'importLegacyInventory', preserveFirstCopy: true,
+      inventory: { coins: 0, cards: uid === 'alice' ? { A: 2, B: 1 } : {} } }).status, 200);
+  }
+  assert.equal(call('alice', { action: 'status' }).body.preserveFirstCopy, true);
+  const id = call('alice', { action: 'invite' }).body.room.id;
+  let revision = call('bob', { action: 'join', roomId: id }).body.room.revision;
+  assert.equal(call('alice', { action: 'offer', roomId: id, revision, offer: { coins: 0, cards: ['B'] } }).body.error, 'CARD_NOT_OWNED');
+  revision = call('alice', { action: 'offer', roomId: id, revision, offer: { coins: 0, cards: ['A'] } }).body.room.revision;
+  for (const uid of ['alice', 'bob']) assert.equal(call(uid, { action: 'ready', roomId: id, revision }).status, 200);
+  for (const uid of ['alice', 'bob']) assert.equal(call(uid, { action: 'confirm', roomId: id, revision }).status, 200);
+  assert.deepEqual(state.accounts[accountKey('alice')].cards, { A: 1, B: 1 });
+  assert.deepEqual(state.accounts[accountKey('bob')].cards, { A: 1 });
+});

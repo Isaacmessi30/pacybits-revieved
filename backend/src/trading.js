@@ -79,6 +79,7 @@ function view(room, key) {
     id: room.id, status: room.status, expiresAt: room.expiresAt, revision: room.revision,
     self: key, members: room.members,
     offers: room.offers, ready: room.ready, confirmed: room.confirmed,
+    ...(room.testPartnerUid ? { testPartner: true } : {}),
     ...(room.closedAt !== undefined ? { closedAt: room.closedAt } : {})
   };
 }
@@ -217,6 +218,8 @@ function execute(state, key, input, now, id) {
       requireValue(room.members.length === 2, 'WAITING_FOR_PARTNER', 409);
       if (input.action === 'offer') {
         const offer = validOffer(input.offer);
+        requireValue(!room.testPartnerUid || (offer.coins === 0 && offer.cards.length === 0),
+          'TEST_PARTNER_EMPTY_OFFER_ONLY', 409);
         owns(a, offer);
         room.offers[key] = offer;
         room.revision += 1;

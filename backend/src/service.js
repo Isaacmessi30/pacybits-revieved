@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { transition } from './trading.js';
+import { transitionWithTestPartner } from './test-partner.js';
 
 // Shared by Firebase Functions and the standalone Render server.
-export function createTradingService({ auth, database, logError = console.error }) {
+export function createTradingService({ auth, database, logError = console.error, testPartnerEnabled = false }) {
   return async function trade({ authorization, body, byteLength }) {
     const limit = body?.action === 'importLegacyInventory' ? 262144 : 4096;
     if (byteLength > limit) return { status: 413, body: { error: 'REQUEST_TOO_LARGE' } };
@@ -21,7 +21,7 @@ export function createTradingService({ auth, database, logError = console.error 
     let outcome;
     try {
       const tx = await database.ref('revivalPrivate').transaction(current => {
-        outcome = transition(current, identity.uid, body, now, id);
+        outcome = transitionWithTestPartner(current, identity.uid, body, now, id, testPartnerEnabled);
         return outcome.state;
       }, undefined, false);
       if (!tx.committed) return { status: 409, body: { error: 'RETRY_REQUEST' } };

@@ -60,3 +60,27 @@ activate the original screen or authorize native completion/handshake events.
 The inspected routine at `0x1004b9ee0` changes view frames and schedules a closure;
 it is not established as the actual matchmaking boundary. Further tracing is
 required before redirecting that path.
+
+The actual GameKit find-match routine starts at `0x10011b360` and calls
+`findMatchForRequest:withCompletionHandler:` at `0x10011b568`. It reads the
+request from GameCenterHelper's field-offset global `0x1012972d0`, and the
+matchmaker from `0x1012972e0`. It also serves other game modes. A replacement
+must be scoped to revival trading; a global GameKit override would affect them.
+Focused disassembly: `analysis/original-gk-match-request.txt` (local).
+
+## Outbound island validation
+
+`LegacySendIsland.s`, `LegacyOutboundBridge.swift`, and
+`scripts/original_transport_patch.py` now implement a source-hash-checked sender
+entry patch and C bridge. The fallback preserves the original sender for inactive
+adapters and non-trading events. Local checks verified the three branch targets,
+allowed byte-change regions, unsupported-image rejection, and copied Swift String/
+Any payload lifetimes. These are structural and macOS tests, not arm64 device proof.
+The patch is not enabled in the distributed IPA packager. The bridge deliberately
+has no installed handler until native lifecycle and settlement integration is ready.
+
+Original accept routine sends `tradingCompleteTradeAccept`, then only constructs
+`tradingHandshake` once its peer-accepted flag is also set. The handshake contains
+a dictionary (not an empty acknowledgement). Its send is at `0x1006bb04c`;
+subsequent code sets isSentHandshake and calls `0x1006bb218` if isReceivedHandshake
+was already true. This path must be coordinated with server receipt reconciliation.

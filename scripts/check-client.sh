@@ -14,3 +14,10 @@ xcrun swiftc -parse-as-library \
   "$revival_root/client/Checks/ClientChecks.swift" \
   -o "$revival_build/client-checks"
 "$revival_build/client-checks"
+xcrun swiftc -parse-as-library \
+  -target "$(uname -m)-apple-macos12.0" \
+  -module-cache-path "${TMPDIR:-/tmp}/pacybits-revival-swift-modules" \
+  "$revival_root/client/original-ui/LegacyOutboundBridge.swift" \
+  "$revival_root/client/Checks/LegacyBridgeChecks.swift" \
+  -o "$revival_build/legacy-bridge-checks"
+"$revival_build/legacy-bridge-checks"

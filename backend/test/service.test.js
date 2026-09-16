@@ -36,10 +36,10 @@ test('shared service limits ordinary requests and allows bounded legacy imports'
   assert.equal(f.verified.length, 0);
 });
 
-test('verified Game Center tokens need no email; caller cannot spoof the provider', async () => {
+test('Google-only trading rejects Game Center and caller-supplied provider claims', async () => {
   const gc = fixture({ uid: 'game-player', firebase: { sign_in_provider: 'gc.apple.com' } });
-  assert.equal((await gc.trade({ authorization: 'Bearer token', body: { action: 'register' }, byteLength: 21 })).status, 200);
+  assert.equal((await gc.trade({ authorization: 'Bearer token', body: { action: 'register' }, byteLength: 21 })).status, 403);
   assert.deepEqual(gc.verified, [['token', true]]);
   const custom = fixture({ uid: 'game-player', firebase: { sign_in_provider: 'custom' } });
-  assert.equal((await custom.trade({ authorization: 'Bearer token', body: { action: 'register', provider: 'gc.apple.com' }, byteLength: 80 })).status, 403);
+  assert.equal((await custom.trade({ authorization: 'Bearer token', body: { action: 'register', provider: 'google.com', email_verified: true }, byteLength: 100 })).status, 403);
 });

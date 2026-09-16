@@ -13,6 +13,24 @@ DYLIB_PATH = '@executable_path/Frameworks/RevivalBootstrap.dylib'
 TEST_BUNDLE = 'com.pacybitsrevival.fut20.launchtest'
 
 
+def configure_google(info, config):
+    bundle = config.get('BUNDLE_ID')
+    client = config.get('CLIENT_ID', '')
+    scheme = config.get('REVERSED_CLIENT_ID', '')
+    suffix = '.apps.googleusercontent.com'
+    if (bundle != 'com.pacybitsrevival.fut20' or not client.endswith(suffix)
+            or not client[:-len(suffix)]
+            or scheme != 'com.googleusercontent.apps.' + client[:-len(suffix)]):
+        raise ValueError('Missing or inconsistent Google iOS client configuration')
+    info['CFBundleIdentifier'] = bundle
+    types = list(info.get('CFBundleURLTypes', []))
+    if not any(scheme in item.get('CFBundleURLSchemes', []) for item in types):
+        types.append({'CFBundleURLName': 'RevivalGoogleLogin', 'CFBundleTypeRole': 'Editor',
+                      'CFBundleURLSchemes': [scheme]})
+    info['CFBundleURLTypes'] = types
+    info['RevivalAuthenticationProvider'] = 'google.com'
+
+
 def arm64_slice(binary):
     if binary[:4] != bytes.fromhex('cafebabe'):
         raise ValueError('Expected the inspected universal executable')
@@ -88,11 +106,12 @@ def package(source, module, output, firebase=None):
         info['MinimumOSVersion'] = '15.0'
         info['RevivalLaunchTest'] = 1 if firebase is None else 2
         if firebase is not None:
-            info['CFBundleVersion'] = '1202'
+            info['CFBundleVersion'] = '1203'
             config_data = firebase.read_bytes()
             config = plistlib.loads(config_data)
             if config.get('PROJECT_ID') != 'pacybits---revival' or not config.get('API_KEY'):
                 raise ValueError('Unexpected Firebase project configuration')
+            configure_google(info, config)
         with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as result:
             for entry in archive.infolist():
                 if not entry.filename.startswith('Payload/'):
@@ -115,17 +134,18 @@ def package(source, module, output, firebase=None):
         assert archive.testzip() is None
         assert archive.read(executable) == patched
         assert archive.read(root + 'Frameworks/RevivalBootstrap.dylib') == dylib
-        assert plistlib.loads(archive.read(info_path))['CFBundleIdentifier'] == TEST_BUNDLE
+        assert plistlib.loads(archive.read(info_path))['CFBundleIdentifier'] == info['CFBundleIdentifier']
     report = {
         'output': str(output), 'sha256': hashlib.sha256(output.read_bytes()).hexdigest(),
         'source_sha256': EXPECTED_SOURCE, 'module_sha256': hashlib.sha256(dylib).hexdigest(),
-        'bundle_id': TEST_BUNDLE, 'minimum_ios': '15.0', 'architecture': 'arm64',
+        'bundle_id': info['CFBundleIdentifier'], 'minimum_ios': '15.0', 'architecture': 'arm64',
         'signing': 'Requires ESign signing with user certificate',
         'validation': 'Archive integrity, Mach-O header-only load-command change, embedded module bytes',
         'device_launch_tested': False, 'restored_trading': False, 'google_login_connected': False,
         'original_save_imported': False,
         'trading_client_connected': firebase is not None,
-        'game_center_firebase_connected': firebase is not None,
+        'google_callback_configured': firebase is not None,
+        'game_center_firebase_connected': False,
         'device_trading_verified': False
     }
     output.with_suffix('.json').write_text(json.dumps(report, indent=2) + '\n')

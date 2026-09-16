@@ -84,3 +84,11 @@ Original accept routine sends `tradingCompleteTradeAccept`, then only constructs
 a dictionary (not an empty acknowledgement). Its send is at `0x1006bb04c`;
 subsequent code sets isSentHandshake and calls `0x1006bb218` if isReceivedHandshake
 was already true. This path must be coordinated with server receipt reconciliation.
+
+Handshake dictionary keys confirmed from construction: `coins`, `idsLeft`,
+`idsRight` (construction at `0x1006baa74`, `0x1006baad4`, `0x1006bad44`).
+Receiver begins its handshake branch at `0x1006e522c`, casts envelope.value to
+[String:Any], and compares coin/card state against its local confirmation dialog.
+Coin sign/encoding and the complete acceptance condition are not yet verified;
+do not synthesize this payload or invoke the final inventory mutation from this
+partial map.

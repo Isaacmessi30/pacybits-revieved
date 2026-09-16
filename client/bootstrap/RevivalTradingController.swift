@@ -1,5 +1,4 @@
 import UIKit
-import GameKit
 
 @MainActor
 @objc(PBRTradingController)
@@ -17,7 +16,7 @@ final class RevivalTradingController: UITableViewController {
     private var message = "Connecting…"
     private var timer: Timer?
     private var renewed = Date.distantPast
-    private var gameID: String?
+    private var firebaseUID: String?
     private var labels: [String:String] = [:]
     private var lastRoom: String? {
         get { UserDefaults.standard.string(forKey: "RevivalActiveRoom") }
@@ -36,7 +35,6 @@ final class RevivalTradingController: UITableViewController {
         navigationItem.leftBarButtonItem = UIBarButtonItem(title: "Close", style: .plain, target: self, action: #selector(closeTrading))
         navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Refresh", style: .plain, target: self, action: #selector(refreshTrading))
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "cell")
-        run { try await self.connect() }
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self, self.api != nil, !self.busy,
@@ -44,6 +42,11 @@ final class RevivalTradingController: UITableViewController {
                 self.run { try await self.refresh() }
             }
         }
+    }
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // Browser authentication requires an attached presentation window.
+        if api == nil && !busy { run { try await self.connect() } }
     }
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
@@ -60,11 +63,11 @@ final class RevivalTradingController: UITableViewController {
     }
     private func describe(_ error: Error) -> String {
         if case TradingClientError.server(_, let code) = error {
-            if code == "VERIFIED_GOOGLE_ACCOUNT_REQUIRED" { return "The Render server needs its latest update. In Render, choose Manual Deploy → Deploy latest commit." }
+            if code == "VERIFIED_GOOGLE_ACCOUNT_REQUIRED" { return "Trading requires a verified Google account. Close Trading and sign in with Google again." }
             return "Trading server: \(code). Tap Refresh to check the result before trying again."
         }
         if case FirebaseAuthenticationError.rejected(let status) = error {
-            return "Firebase rejected Game Center login (HTTP \(status)). Check the provider and the signed app's Game Center configuration."
+            return "Firebase rejected Google login (HTTP \(status)). Check that Google sign-in is enabled for this Firebase project."
         }
         return error.localizedDescription
     }
@@ -73,24 +76,20 @@ final class RevivalTradingController: UITableViewController {
             throw RevivalFailure("Firebase configuration is missing from this build.")
         }
         let config = try FirebaseProjectConfiguration.load(plist: Data(contentsOf: url))
-        let auth = try FirebaseRESTAuthentication(apiKey: config.apiKey)
-        let player = GKLocalPlayer.local
-        guard player.isAuthenticated else { throw RevivalFailure("Sign in to Game Center in the game, then tap Refresh.") }
-        let team = player.teamPlayerID, game = player.gamePlayerID
-        let proof: GameCenterCredential = try await withCheckedThrowingContinuation { continuation in
-            player.fetchItems { url, signature, salt, timestamp, error in
-                if let error = error { continuation.resume(throwing: error); return }
-                guard let url = url, let signature = signature, let salt = salt else {
-                    continuation.resume(throwing: RevivalFailure("Game Center did not return an identity proof.")); return
-                }
-                continuation.resume(returning: GameCenterCredential(teamPlayerID: team, gamePlayerID: game,
-                    publicKeyURL: url, signature: signature, salt: salt, timestamp: timestamp, displayName: player.displayName))
-            }
+        let auth: FirebaseRESTAuthentication
+        if let existing = authentication { auth = existing }
+        else {
+            auth = try FirebaseRESTAuthentication(apiKey: config.apiKey)
+            authentication = auth
         }
-        guard player.isAuthenticated, player.gamePlayerID == game else { throw FirebaseAuthenticationError.sessionChanged }
-        let session = try await auth.signIn(gameCenter: proof, bundleID: Bundle.main.bundleIdentifier ?? "")
-        authentication = auth; gameID = game
-        message = "Game Center and Firebase connected. Waking trading server…"; tableView.reloadData()
+        let session: FirebaseSession
+        do { session = try await auth.session() }
+        catch FirebaseAuthenticationError.signInRequired {
+            let google = GoogleBrowserLogin(configuration: config, authentication: auth)
+            session = try await google.signIn(presenting: self)
+        }
+        firebaseUID = session.uid
+        message = "Google and Firebase connected. Waking trading server…"; tableView.reloadData()
         // Only the read-only health check is retried while Render wakes from sleep.
         let transport = URLSessionTradingTransport()
         var awake = false
@@ -124,13 +123,14 @@ final class RevivalTradingController: UITableViewController {
             throw RevivalFailure("You no longer have these coins or duplicates in the game. Change your offer.")
         }
     }
-    private func checkPlayer() throws {
-        guard GKLocalPlayer.local.isAuthenticated, GKLocalPlayer.local.gamePlayerID == gameID else {
-            throw RevivalFailure("Game Center account changed. Close Trading and sign in again.")
+    private func checkPlayer() async throws {
+        guard let authentication = authentication,
+              try await authentication.session().uid == firebaseUID else {
+            throw RevivalFailure("Google account changed. Close Trading and sign in again.")
         }
     }
     private func refresh() async throws {
-        try checkPlayer()
+        try await checkPlayer()
         guard let client = api, let storage = ledger else { return }
         if queued && Date().timeIntervalSince(renewed) >= 20 {
             accept(try await client.enterOrRenewQueue()); renewed = Date()
@@ -149,7 +149,7 @@ final class RevivalTradingController: UITableViewController {
             let ready = room.members.filter { room.ready[$0] == room.revision }.count
             message = room.members.count == 1 ? "Waiting for your friend. Share your invite." : "Connected • \(ready)/2 players ready"
         } else {
-            message = queued ? "Searching for a trading partner…" : "Connected as \(GKLocalPlayer.local.displayName). Select up to three duplicates to offer."
+            message = queued ? "Searching for a trading partner…" : "Connected with Google. Select up to three duplicates to offer."
         }
     }
     private func accept(_ response: TradingResponse) {
@@ -166,7 +166,7 @@ final class RevivalTradingController: UITableViewController {
     @objc private func closeTrading() {
         run {
             if let client = self.api {
-                try self.checkPlayer()
+                try await self.checkPlayer()
                 if let id = self.lastRoom { self.accept(try await client.cancel(roomID: id)) }
                 if self.queued { _ = try await client.leaveQueue(); self.queued = false }
                 try await self.refresh()
@@ -229,24 +229,24 @@ final class RevivalTradingController: UITableViewController {
                 guard let amount = Int(value), amount >= 0, amount <= (self.inventory?.coins ?? 0) else { return }
                 self.coins = amount; self.message = "Offer: \(amount) coins. Tap Send offer to update it."; self.tableView.reloadData()
             }
-            case 2: run { try self.checkPlayer(); try self.checkOffer(TradeOffer(coins: self.coins, cards: Array(self.selected))); self.accept(try await client.updateOffer(room: room, offer: TradeOffer(coins: self.coins, cards: Array(self.selected)))); try await self.refresh() }
-            case 3: run { try self.checkPlayer(); self.accept(try await client.ready(room: room)); try await self.refresh() }
+            case 2: run { try await self.checkPlayer(); try self.checkOffer(TradeOffer(coins: self.coins, cards: Array(self.selected))); self.accept(try await client.updateOffer(room: room, offer: TradeOffer(coins: self.coins, cards: Array(self.selected)))); try await self.refresh() }
+            case 3: run { try await self.checkPlayer(); self.accept(try await client.ready(room: room)); try await self.refresh() }
             default:
                 let alert = UIAlertController(title: "Confirm this trade?", message: "Your offer: \(room.offers[room.selfKey]?.coins ?? 0) coins and \(room.offers[room.selfKey]?.cards.joined(separator: ", ") ?? "no cards"). Both players must confirm the same offers.", preferredStyle: .alert)
                 alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
                 alert.addAction(UIAlertAction(title: "Confirm", style: .default) { _ in self.run {
-                    try self.checkPlayer(); if let offer = room.offers[room.selfKey] { try self.checkOffer(offer) }; self.accept(try await client.confirm(room: room)); try await self.refresh()
+                    try await self.checkPlayer(); if let offer = room.offers[room.selfKey] { try self.checkOffer(offer) }; self.accept(try await client.confirm(room: room)); try await self.refresh()
                 } })
                 present(alert, animated: true)
             }
         } else {
             switch path.row {
-            case 0: run { try self.checkPlayer(); self.accept(try await client.createInvitation()); try await self.refresh() }
+            case 0: run { try await self.checkPlayer(); self.accept(try await client.createInvitation()); try await self.refresh() }
             case 1: prompt(title: "Paste your friend's invite") { id in self.run {
-                try self.checkPlayer(); self.accept(try await client.joinInvitation(roomID: id.trimmingCharacters(in: .whitespacesAndNewlines))); try await self.refresh()
+                try await self.checkPlayer(); self.accept(try await client.joinInvitation(roomID: id.trimmingCharacters(in: .whitespacesAndNewlines))); try await self.refresh()
             } }
             default: run {
-                try self.checkPlayer()
+                try await self.checkPlayer()
                 if self.queued { _ = try await client.leaveQueue(); self.queued = false }
                 else { self.accept(try await client.enterOrRenewQueue()); self.renewed = Date() }
                 try await self.refresh()

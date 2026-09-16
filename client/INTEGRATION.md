@@ -1,11 +1,26 @@
-# Connected native client, build 2
+# Trading integration status
 
-The injected module now opens a UIKit trading panel from the original trading
-menu's Objective-C tap handler, with a floating button as a second entry point.
-It exchanges fresh Game Center proof for Firebase credentials, calls the Render
-API, imports the current installation's collection once, and implements invites,
-queue renewal, offers, ready/confirm/cancel, status polling and receipt recovery.
-Google coordinator source remains separate; this injected build uses Game Center.
+## Current source: Google authentication
+
+The active client authenticates through GoogleBrowserLogin and Firebase REST.
+Trading no longer asks Game Center for a proof or checks GKLocalPlayer. Each
+request uses the Firebase session and checks that its UID matches the connected
+account. The Render service accepts only Google-backed Firebase tokens with a
+verified email. Provider fields in request bodies cannot override the token.
+
+Firebase-configured packaging uses `com.pacybitsrevival.fut20` and registers the
+plist's reversed Google client ID as a callback scheme. ESign must retain that
+bundle ID. Browser login starts after the controller has a presentation window.
+This source change does not modify any previously downloaded IPA.
+
+## Original interface work remains incomplete
+
+The active bootstrap still opens the prototype trading panel. The user rejected
+that interface; it must not be described or distributed as restored original
+trading. The original sender hook and payload bridge are implemented and tested
+structurally, but not enabled by the packager. Original matchmaking, rendering
+and completion must be connected before an original-interface IPA is ready.
+See [the adapter map](original-ui/ADAPTER-MAP.md).
 
 LegacyInventoryBridge is restricted to the inspected FUT20 arm64 Mach-O UUID.
 It waits for the original Swift collection initialization, compares the live
@@ -21,7 +36,8 @@ their previous semantics. No repeat import or ongoing client balance upload was
 added. Offline earnings remain local and are not newly tradeable in this version.
 Server deltas preserve unrelated local gains; conflicting spends stop recovery.
 
-Validation: 27 backend unit tests, 10 standalone Firebase emulator checks,
-13 portable mock-HTTP checks and hosted iPhone compilation passed. These checks
-do not prove Apple identity verification, real Valet access, or two-device trades.
-The first connected IPA uses the existing separate launch-test bundle ID.
+Validation: 32 backend unit tests and 15 portable HTTP/offer checks passed before
+this authentication switch. The Google-only backend passed all 32 tests after
+the switch. On-device Google login and complete original-UI trades remain unverified.
+The previously delivered build 2 still uses Game Center and the separate
+`.launchtest` bundle; it is not a Google build.

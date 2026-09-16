@@ -18,6 +18,7 @@ jobs:
         with:
           node-version: '22'
       - run: npm --prefix backend test
+      - run: node --test backend/integration/http.test.js
   ios-client:
     runs-on: macos-15
     timeout-minutes: 15

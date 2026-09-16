@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: pacybits-revival-trading
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: backend
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeployTrigger: off
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: NODE_ENV
+        value: production
+      - key: FIREBASE_PROJECT_ID
+        value: pacybits---revival
+      - key: FIREBASE_DATABASE_URL
+        value: https://pacybits---revival-default-rtdb.europe-west1.firebasedatabase.app
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false

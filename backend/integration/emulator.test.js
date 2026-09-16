@@ -4,6 +4,8 @@ import { initializeApp, deleteApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getDatabase } from 'firebase-admin/database';
 import { accountKey, emptyState } from '../src/trading.js';
+import { createTradingService } from '../src/service.js';
+import { createTradingHTTPServer } from '../src/http-server.js';
 
 const project = 'demo-pacybits-revival';
 // Refuse to use these fixtures or fake tokens against a live service.
@@ -11,7 +13,13 @@ assert.match(process.env.FIREBASE_AUTH_EMULATOR_HOST ?? '', /^(127\.0\.0\.1|loca
 assert.match(process.env.FIREBASE_DATABASE_EMULATOR_HOST ?? '', /^(127\.0\.0\.1|localhost):\d+$/);
 const app = initializeApp({ projectId: project, databaseURL: `https://${project}-default-rtdb.firebaseio.com` });
 const auth = getAuth(app), db = getDatabase(app);
-const endpoint = `http://127.0.0.1:5001/${project}/europe-west1/trading`;
+let endpoint = `http://127.0.0.1:5001/${project}/europe-west1/trading`;
+if (process.env.REVIVAL_TEST_STANDALONE === 'true') {
+  const server = createTradingHTTPServer(createTradingService({ auth, database: db }));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  endpoint = `http://127.0.0.1:${server.address().port}/trading`;
+  after(() => new Promise(resolve => server.close(resolve)));
+}
 after(async () => { await deleteApp(app); });
 
 function token(uid, provider = 'google.com') {

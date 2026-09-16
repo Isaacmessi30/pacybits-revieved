@@ -1,7 +1,7 @@
 # PACYBITS revival development
 
 Development source for a Google-authenticated trading backend and iOS client.
-**There is no working modified IPA yet.** The original game has not been
+**There is no trading-enabled IPA yet.** The original game has not been
 connected to this backend, and real Google login/device trading is untested.
 
 ## Hosted Mac build
@@ -56,3 +56,11 @@ in verified empty header padding, and sets the separate test bundle ID to
 ESign. The archive has no valid final signature until ESign signs it.
 The test app has separate storage and does not import the original collection.
 **This test does not restore trading or connect Google login.**
+
+## Free server hosting
+
+[Deploy the Render Free server](https://render.com/deploy?repo=https://github.com/Isaacmessi30/pacybits-revieved)
+
+Follow [the Render setup guide](backend/RENDER.md). The Blueprint selects the
+Free compute plan and keeps Firebase on Spark. Enter the Firebase server key
+only in Render. Deployment is pending the account owner completing that step.

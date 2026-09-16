@@ -17,3 +17,7 @@ build/
 GoogleService-Info.plist
 
 dist/
+
+.env
+.env.*
+*firebase-adminsdk*.json

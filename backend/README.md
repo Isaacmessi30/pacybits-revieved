@@ -6,7 +6,8 @@ device testing remain required. See [the IPA inspection](../analysis/trading-map
 
 ## Behavior
 
-- POST JSON to the `trading` HTTPS function in `europe-west1`.
+- POST JSON to `/trading` on the Render server, or the `trading` HTTPS function
+  when using Firebase Functions.
 - Authenticate with `Authorization: Bearer <Firebase ID token>` from a verified
   Google account. The server checks token validity, revocation and provider.
 - A verified Google user calls `register` to create an empty account, then
@@ -119,10 +120,11 @@ claims; this does **not** test a real Google OAuth login.
 ## Deployment and operating limits
 
 No deployment was performed. The screenshot supplied by the user showed Spark.
-Firebase requires Blaze for Cloud Functions deployment; this needs a separate
-decision before hosting this adapter live. The trading engine itself is
-separate from the Cloud Functions adapter and could be hosted on another
-trusted Node.js server.
+Firebase Functions deployment requires Blaze. A standalone Node.js server and
+`render.yaml` now support Render Free while Firebase remains on Spark. See
+[Render setup](RENDER.md). Both adapters share the same authentication and
+transaction service. Live deployment is pending Render account setup and the
+server credential; no real Google login has been tested.
 
 This private-beta implementation serializes the whole ledger in a Realtime
 Database transaction. That makes the initial conservation and race guarantees

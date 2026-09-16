@@ -84,7 +84,7 @@ function view(room, key) {
   };
 }
 function validOffer(input) {
-  requireValue(plain(input) && Object.keys(input).sort().join(',') === 'cards,coins', 'INVALID_OFFER');
+  requireValue(plain(input) && ['cards,coins', 'cards,coins,slots'].includes(Object.keys(input).sort().join(',')), 'INVALID_OFFER');
   requireValue(integer(input.coins, 0, MAX_COINS), 'INVALID_COINS');
   requireValue(Array.isArray(input.cards) && input.cards.length <= 3, 'MAX_THREE_CARDS');
   const ids = new Set();
@@ -94,7 +94,14 @@ function validOffer(input) {
     requireValue(!ids.has(card), 'DUPLICATE_CARD');
     ids.add(card);
   }
-  return { coins: input.coins, cards: [...input.cards].sort() };
+  if (Object.hasOwn(input, 'slots')) {
+    requireValue(Array.isArray(input.slots) && input.slots.length === input.cards.length
+      && input.slots.every(slot => integer(slot, 0, 2))
+      && new Set(input.slots).size === input.slots.length, 'INVALID_SLOTS');
+  }
+  const cards = [...input.cards].sort();
+  return { coins: input.coins, cards,
+    ...(input.slots ? { slots: cards.map(card => input.slots[input.cards.indexOf(card)]) } : {}) };
 }
 function owns(a, offer) {
   requireValue(a.coins >= offer.coins, 'INSUFFICIENT_COINS', 409);

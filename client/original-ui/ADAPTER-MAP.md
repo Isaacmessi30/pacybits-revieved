@@ -47,3 +47,16 @@ state validation and Firebase token verification. It has no Apple/Game Center
 identity dependency. The IPA must use the plist's BUNDLE_ID and register the
 REVERSED_CLIENT_ID URL scheme. Existing .launchtest packaging does not meet that
 bundle requirement and must not be advertised as Google-ready.
+
+## Card position transport (2026-09-16)
+
+`TradeOffer.slots` optionally carries one original position (0–2) per card.
+The server sorts cards and positions together, rejects duplicate/out-of-range
+positions, and invalidates readiness even when only positions change.
+`OriginalTradeOffer` preserves empty positions and translates native pick/delete/
+coin actions. This is tested independently of the runtime hook. It does not
+activate the original screen or authorize native completion/handshake events.
+
+The inspected routine at `0x1004b9ee0` changes view frames and schedules a closure;
+it is not established as the actual matchmaking boundary. Further tracing is
+required before redirecting that path.

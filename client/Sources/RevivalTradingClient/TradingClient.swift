@@ -12,9 +12,11 @@ public struct FirebaseSession: Sendable {
 public struct TradeOffer: Codable, Equatable, Sendable {
     public let coins: Int
     public let cards: [String]
-    public init(coins: Int, cards: [String]) {
+    public let slots: [Int]?
+    public init(coins: Int, cards: [String], slots: [Int]? = nil) {
         self.coins = coins
         self.cards = cards
+        self.slots = slots
     }
 }
 

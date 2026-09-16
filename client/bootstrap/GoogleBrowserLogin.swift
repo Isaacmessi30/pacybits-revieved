@@ -8,7 +8,7 @@ import Security
 final class GoogleBrowserLogin: NSObject, ASWebAuthenticationPresentationContextProviding {
     private let configuration: FirebaseProjectConfiguration
     private let authentication: FirebaseRESTAuthentication
-    private weak var presenter: UIViewController?
+    private var anchor: UIWindow?
     private var browser: ASWebAuthenticationSession?
     private let transport: TradingHTTPTransport
 
@@ -19,15 +19,15 @@ final class GoogleBrowserLogin: NSObject, ASWebAuthenticationPresentationContext
         self.transport = transport
     }
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        presenter!.view.window!
+        anchor ?? ASPresentationAnchor()
     }
     func signIn(presenting presenter: UIViewController) async throws -> FirebaseSession {
-        guard browser == nil, presenter.view.window != nil,
+        guard browser == nil, let window = presenter.view.window,
               Bundle.main.bundleIdentifier == configuration.bundleID else {
             throw RevivalFailure("Google login requires the configured bundle ID: \(configuration.bundleID). Keep that ID when signing the IPA.")
         }
-        self.presenter = presenter
         let verifier = try Self.random(), state = try Self.random()
+        anchor = window
         let challenge = Self.base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
         let redirect = configuration.reversedClientID + ":/oauth2redirect"
         var authorization = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
@@ -41,7 +41,7 @@ final class GoogleBrowserLogin: NSObject, ASWebAuthenticationPresentationContext
             URLQueryItem(name: "state", value: state),
             URLQueryItem(name: "prompt", value: "select_account")
         ]
-        defer { browser = nil; self.presenter = nil }
+        defer { browser = nil; anchor = nil }
         let callback: URL = try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(url: authorization.url!, callbackURLScheme: configuration.reversedClientID) { url, error in
                 if let error = error { continuation.resume(throwing: error) }

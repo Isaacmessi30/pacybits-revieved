@@ -36,6 +36,25 @@ struct ClientChecks {
     }
     static func main() async throws {
         let tests: [(String, () async throws -> Void)] = [
+            ("original card slots survive deletion, sorting and server snapshots", {
+                var offer = OriginalTradeOffer()
+                try offer.apply(.picked(slot: 0, cardID: "cardB"))
+                try offer.apply(.picked(slot: 2, cardID: "cardA"))
+                try offer.apply(.coins(50))
+                let server = TradeOffer(coins: 50, cards: ["cardA", "cardB"], slots: [2, 0])
+                let restored = try OriginalTradeOffer(server: server)
+                try check(restored == offer, "Server sorting moved original card positions")
+                try offer.apply(.deleted(slot: 0))
+                try check(offer.serverOffer.cards == ["cardA"] && offer.serverOffer.slots == [2], "Deletion collapsed a gap")
+                let before = offer
+                do {
+                    try offer.apply(.picked(slot: 1, cardID: "cardA"))
+                    throw CheckFailure.failed("Duplicate card accepted")
+                } catch TradingClientError.invalidResponse {}
+                try check(offer == before, "Rejected action mutated offer")
+                let handled = try offer.apply(.handshake)
+                try check(!handled && offer == before, "Handshake changed inventory offer")
+            }),
             ("rejects remote HTTP even when emulator mode is enabled", {
                 do {
                     _ = try TradingClient(endpoint: URL(string: "http://example.test")!, allowLocalEmulator: true) {

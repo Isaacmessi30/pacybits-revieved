@@ -260,3 +260,29 @@ test('full-collection import preserves first copies, including newly received ca
   assert.deepEqual(state.accounts[accountKey('alice')].cards, { A: 1, B: 1 });
   assert.deepEqual(state.accounts[accountKey('bob')].cards, { A: 1 });
 });
+
+test('original card positions survive sorting and moving a card invalidates readiness', () => {
+  const f = fixture(), id = pair(f), key = accountKey('alice');
+  let revision = f.state.rooms[id].revision;
+  const offer = { coins: 0, cards: ['cardB', 'cardA'], slots: [0, 2] };
+  const result = f.call('alice', { action: 'offer', roomId: id, revision, offer });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.room.offers[key], { coins: 0, cards: ['cardA', 'cardB'], slots: [2, 0] });
+  revision = result.body.room.revision;
+  for (const uid of ['alice', 'bob']) f.call(uid, { action: 'ready', roomId: id, revision });
+  const moved = f.call('alice', { action: 'offer', roomId: id, revision, offer: { ...offer, slots: [1, 2] } });
+  assert.equal(moved.status, 200);
+  assert.deepEqual(moved.body.room.ready, {});
+  assert.equal(moved.body.room.revision, revision + 1);
+});
+
+test('malformed original positions cannot alter an offer or inventory', () => {
+  for (const slots of [[0, 0], [-1, 2], [0, 3], [true, 2], [0.5, 2], [0], null, '02']) {
+    const f = fixture(), id = pair(f), room = structuredClone(f.state.rooms[id]);
+    const result = f.call('alice', { action: 'offer', roomId: id, revision: room.revision,
+      offer: { coins: 0, cards: ['cardA', 'cardB'], slots } });
+    assert.equal(result.body.error, 'INVALID_SLOTS');
+    assert.deepEqual(f.state.rooms[id].offers, room.offers);
+    assert.equal(f.state.accounts[accountKey('alice')].cards.cardA, 2);
+  }
+});

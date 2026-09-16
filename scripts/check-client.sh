@@ -8,6 +8,7 @@ xcrun swiftc -parse-as-library \
   -module-cache-path "${TMPDIR:-/tmp}/pacybits-revival-swift-modules" \
   "$revival_root/client/Sources/RevivalTradingClient/TradingClient.swift" \
   "$revival_root/client/Sources/RevivalTradingClient/FirebaseRESTAuthentication.swift" \
+  "$revival_root/client/Sources/RevivalTradingClient/GoogleOAuthCallback.swift" \
   "$revival_root/client/Checks/ClientChecks.swift" \
   -o "$revival_build/client-checks"
 "$revival_build/client-checks"

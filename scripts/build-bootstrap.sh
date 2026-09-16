@@ -11,9 +11,12 @@ xcrun --sdk iphoneos swiftc -parse-as-library -swift-version 5 \
   -sdk "$revival_sdk" -target arm64-apple-ios15.0 -module-name PBRRevival \
   -import-objc-header "$revival_root/client/bootstrap/RevivalRuntime.h" \
   -emit-library -Xlinker -install_name -Xlinker @executable_path/Frameworks/RevivalBootstrap.dylib \
-  -framework UIKit -framework Foundation -framework GameKit \
+  -framework UIKit -framework Foundation -framework GameKit -framework AuthenticationServices -framework Security \
   "$revival_root/client/Sources/RevivalTradingClient/TradingClient.swift" \
   "$revival_root/client/Sources/RevivalTradingClient/FirebaseRESTAuthentication.swift" \
+  "$revival_root/client/Sources/RevivalTradingClient/GoogleOAuthCallback.swift" \
+  "$revival_root/client/bootstrap/GoogleBrowserLogin.swift" \
+  "$revival_root/client/original-ui/OriginalTradeProtocol.swift" \
   "$revival_root/client/bootstrap/LegacyInventoryBridge.swift" \
   "$revival_root/client/bootstrap/RevivalTradingController.swift" \
   "$revival_output/bootstrap.o" -o "$revival_output/RevivalBootstrap.dylib"

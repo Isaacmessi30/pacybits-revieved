@@ -127,6 +127,25 @@ struct ClientChecks {
                 do { _ = try await auth.session(); throw CheckFailure.failed("Game Center session survived logout") }
                 catch FirebaseAuthenticationError.signInRequired {}
             }),
+            ("Google callback rejects wrong state, redirect and duplicate parameters", {
+                let redirect = "com.googleusercontent.apps.test:/oauth2redirect"
+                let code = try GoogleOAuthCallback.code(from: URL(string: redirect + "?state=expected&code=abc")!, redirectURI: redirect, expectedState: "expected")
+                try check(code == "abc", "Valid callback rejected")
+                for callback in [
+                    redirect + "?state=wrong&code=abc",
+                    redirect + "?state=expected&state=expected&code=abc",
+                    redirect + "?state=expected&code=abc&code=def",
+                    redirect + "?state=expected&error=access_denied",
+                    redirect + "?state=expected&code=abc#fragment",
+                    "com.googleusercontent.apps.other:/oauth2redirect?state=expected&code=abc",
+                    "com.googleusercontent.apps.test:/wrong?state=expected&code=abc"
+                ] {
+                    do {
+                        _ = try GoogleOAuthCallback.code(from: URL(string: callback)!, redirectURI: redirect, expectedState: "expected")
+                        throw CheckFailure.failed("Unsafe callback accepted")
+                    } catch FirebaseAuthenticationError.invalidResponse {}
+                }
+            }),
             ("concurrent callers share one token refresh", {
                 let http = CheckTransport([(200, signInBody(expiry: 1)), (200, refreshBody)], delay: 20_000_000)
                 let auth = try FirebaseRESTAuthentication(apiKey: "test-key", transport: http)

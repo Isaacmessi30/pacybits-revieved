@@ -1,3 +1,12 @@
+## Current integration status — 2026-09-16
+
+A connected device-test IPA is packaged locally at `dist/Pacybits-Revival-Trading-2.ipa`.
+Its native trading panel uses Game Center → Firebase Auth → Render, with guarded
+legacy collection import and settlement. iPhone compilation and automated tests
+pass; real login and two-device trades remain unverified. See
+[client/INTEGRATION.md](client/INTEGRATION.md) for scope and collection limitations.
+Earlier implementation notes below describe the development stages leading here.
+
 # PACYBITS revival development
 
 Development source for a Google-authenticated trading backend and iOS client.

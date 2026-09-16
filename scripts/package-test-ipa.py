@@ -63,7 +63,7 @@ def add_library(binary):
     return bytes(data)
 
 
-def package(source, module, output):
+def package(source, module, output, firebase=None):
     if output.exists():
         raise ValueError('Output already exists; choose a new output path')
     if hashlib.sha256(source.read_bytes()).hexdigest() != EXPECTED_SOURCE:
@@ -86,7 +86,13 @@ def package(source, module, output):
         info['CFBundleIdentifier'] = TEST_BUNDLE
         info['CFBundleDisplayName'] = 'Pacybits Revival Test'
         info['MinimumOSVersion'] = '15.0'
-        info['RevivalLaunchTest'] = 1
+        info['RevivalLaunchTest'] = 1 if firebase is None else 2
+        if firebase is not None:
+            info['CFBundleVersion'] = '1202'
+            config_data = firebase.read_bytes()
+            config = plistlib.loads(config_data)
+            if config.get('PROJECT_ID') != 'pacybits---revival' or not config.get('API_KEY'):
+                raise ValueError('Unexpected Firebase project configuration')
         with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as result:
             for entry in archive.infolist():
                 if not entry.filename.startswith('Payload/'):
@@ -99,6 +105,8 @@ def package(source, module, output):
                 elif entry.filename == info_path:
                     content = plistlib.dumps(info, fmt=plistlib.FMT_BINARY)
                 result.writestr(entry, content)
+            if firebase is not None:
+                result.writestr(root + 'RevivalFirebase.plist', config_data)
             entry = zipfile.ZipInfo(root + 'Frameworks/RevivalBootstrap.dylib')
             entry.create_system = 3
             entry.external_attr = 0o100755 << 16
@@ -115,7 +123,10 @@ def package(source, module, output):
         'signing': 'Requires ESign signing with user certificate',
         'validation': 'Archive integrity, Mach-O header-only load-command change, embedded module bytes',
         'device_launch_tested': False, 'restored_trading': False, 'google_login_connected': False,
-        'original_save_imported': False
+        'original_save_imported': False,
+        'trading_client_connected': firebase is not None,
+        'game_center_firebase_connected': firebase is not None,
+        'device_trading_verified': False
     }
     output.with_suffix('.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report, indent=2))
@@ -126,5 +137,6 @@ if __name__ == '__main__':
     parser.add_argument('source', type=Path)
     parser.add_argument('module', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--firebase', type=Path)
     args = parser.parse_args()
-    package(args.source, args.module, args.output)
+    package(args.source, args.module, args.output, args.firebase)

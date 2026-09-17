@@ -4,7 +4,7 @@ export const QUEUE_TTL_MS = 60_000;
 const MAX_COINS = 1_000_000_000;
 const MAX_COPIES = 1_000_000;
 const SAFE_ID = /^[a-zA-Z0-9_-]{1,128}$/;
-const ACTIONS = new Set(['register', 'importLegacyInventory', 'status', 'invite', 'join', 'queue', 'leaveQueue', 'offer', 'ready', 'confirm', 'cancel']);
+const ACTIONS = new Set(['register', 'importLegacyInventory', 'status', 'invite', 'join', 'queue', 'leaveQueue', 'offer', 'ready', 'confirm', 'handshake', 'cancel']);
 
 export class TradeError extends Error {
   constructor(code, status = 400) { super(code); this.code = code; this.status = status; }
@@ -65,7 +65,7 @@ function createRoom(state, creator, peer, id, now) {
   const members = peer ? [creator, peer] : [creator];
   const room = {
     id, members, status: 'open', createdAt: now, expiresAt: now + ROOM_TTL_MS,
-    revision: 0, offers: {}, ready: {}, confirmed: {}
+    revision: 0, offers: {}, ready: {}, confirmed: {}, handshakes: {}
   };
   for (const key of members) {
     account(state, key).activeRoom = id;
@@ -78,7 +78,7 @@ function view(room, key) {
   return {
     id: room.id, status: room.status, expiresAt: room.expiresAt, revision: room.revision,
     self: key, members: room.members,
-    offers: room.offers, ready: room.ready, confirmed: room.confirmed,
+    offers: room.offers, ready: room.ready, confirmed: room.confirmed, handshakes: room.handshakes ?? {},
     ...(room.testPartnerUid ? { testPartner: true } : {}),
     ...(room.closedAt !== undefined ? { closedAt: room.closedAt } : {})
   };
@@ -212,6 +212,16 @@ function execute(state, key, input, now, id) {
       return { room: null, queued: true };
     }
     case 'leaveQueue': delete state.queue[key]; return { queued: false };
+    case 'handshake': {
+      const room = roomFor(state, key, input.roomId, now, true);
+      requireValue(room.status === 'completed' && room.members.length === 2, 'TRADE_NOT_COMPLETED', 409);
+      requireValue(typeof input.payload === 'string' && input.payload.length > 0 && input.payload.length <= 12000
+        && /^[A-Za-z0-9+/=]+$/.test(input.payload), 'INVALID_HANDSHAKE');
+      room.handshakes ??= {};
+      room.handshakes[key] = input.payload;
+      return { room: view(room, key), inventory: { coins: a.coins, cards: a.cards },
+        inventoryVersion: a.inventoryVersion ?? 0, preserveFirstCopy: a.preserveFirstCopy === true };
+    }
     case 'cancel': {
       const room = roomFor(state, key, input.roomId, now, true);
       if (room.status === 'open') stopRoom(state, room, 'cancelled', now);
@@ -245,14 +255,12 @@ function execute(state, key, input, now, id) {
 }
 
 export function transition(current, uid, input, now, newRoomId) {
-  // Pure and deterministic so Firebase may retry it against a newer snapshot.
   const state = structuredClone(current ?? emptyState());
   requireValue(state.version === 1, 'UNSUPPORTED_LEDGER_VERSION', 500);
   state.accounts ??= {}; state.rooms ??= {}; state.queue ??= {};
-  // Realtime Database removes empty arrays/objects instead of storing them.
   for (const a of Object.values(state.accounts)) a.cards ??= {};
   for (const room of Object.values(state.rooms)) {
-    room.ready ??= {}; room.confirmed ??= {}; room.offers ??= {};
+    room.ready ??= {}; room.confirmed ??= {}; room.offers ??= {}; room.handshakes ??= {};
     for (const offer of Object.values(room.offers)) offer.cards ??= [];
   }
   const key = accountKey(uid);
@@ -271,8 +279,8 @@ export function transition(current, uid, input, now, newRoomId) {
       register: ['action'], importLegacyInventory: ['action', 'inventory', 'preserveFirstCopy'],
       status: ['action', 'roomId'], invite: ['action'], join: ['action', 'roomId'],
       queue: ['action'], leaveQueue: ['action'], cancel: ['action', 'roomId'],
-      offer: ['action', 'roomId', 'revision', 'offer'],
-      ready: ['action', 'roomId', 'revision'], confirm: ['action', 'roomId', 'revision']
+      offer: ['action', 'roomId', 'revision', 'offer'], ready: ['action', 'roomId', 'revision'],
+      confirm: ['action', 'roomId', 'revision'], handshake: ['action', 'roomId', 'payload']
     };
     requireValue(Object.keys(input).every(k => fields[input.action].includes(k)), 'UNEXPECTED_FIELD');
     expire(state, key, now);
@@ -281,7 +289,6 @@ export function transition(current, uid, input, now, newRoomId) {
     return { state: candidate, status: 200, body: { ok: true, ...result } };
   } catch (error) {
     if (!(error instanceof TradeError)) throw error;
-    // Retain the rate debit, but discard any partial trade mutation on failure.
     return { state, status: error.status, body: { ok: false, error: error.code } };
   }
 }

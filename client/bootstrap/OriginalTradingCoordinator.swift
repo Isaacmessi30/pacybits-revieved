@@ -8,6 +8,30 @@ final class OriginalTradingCoordinator {
 
     private static var active: OriginalTradingCoordinator?
 
+    static var hasActiveMatch: Bool { active != nil }
+
+    /// Authenticates before PACYBITS enters any trading mode. A cached Firebase
+    /// refresh token is restored from Keychain, so Google UI appears only when
+    /// there is no reusable session (or Firebase has revoked it).
+    static func ensureAuthenticated(from presenter: UIViewController) async throws {
+        guard let url = Bundle.main.url(forResource: "RevivalFirebase", withExtension: "plist") else {
+            throw RevivalFailure("Firebase configuration is missing from this build.")
+        }
+        let config = try FirebaseProjectConfiguration.load(plist: Data(contentsOf: url))
+        let auth = try FirebaseRESTAuthentication(
+            apiKey: config.apiKey,
+            store: KeychainFirebaseSessionStore(projectID: config.projectID, bundleID: config.bundleID))
+        do {
+            _ = try await auth.session()
+        } catch FirebaseAuthenticationError.signInRequired {
+            _ = try await GoogleBrowserLogin(configuration: config, authentication: auth)
+                .signIn(presenting: presenter)
+        } catch FirebaseAuthenticationError.rejected(let status) where [400, 401, 403].contains(status) {
+            _ = try await GoogleBrowserLogin(configuration: config, authentication: auth)
+                .signIn(presenting: presenter)
+        }
+    }
+
     private weak var presenter: UIViewController?
     private var authentication: FirebaseRESTAuthentication?
     private var api: TradingClient?

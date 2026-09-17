@@ -63,27 +63,6 @@ static id PBRDynamicValue(id object, NSString *selectorName) {
     return ((id (*)(id, SEL))objc_msgSend)(object, selector);
 }
 
-static BOOL PBRViewIsInside(UIView *view, UIView *target) {
-    for (UIView *cursor = view; cursor; cursor = cursor.superview) {
-        if (cursor == target) return YES;
-    }
-    return NO;
-}
-
-static NSString *PBRMenuMode(id receiver, id gesture) {
-    UIView *view = [gesture respondsToSelector:@selector(view)] ? [gesture view] : nil;
-    if (!view) return nil;
-    NSDictionary<NSString *, NSString *> *buttons = @{
-        @"randomButton": @"random", @"codeButton": @"code",
-        @"channelsButton": @"channels", @"friendsButton": @"friends"
-    };
-    for (NSString *getter in buttons) {
-        id value = PBRDynamicValue(receiver, getter);
-        if ([value isKindOfClass:UIView.class] && PBRViewIsInside(view, value)) return buttons[getter];
-    }
-    return nil;
-}
-
 static id PBRGameCenterHelper(void) {
     @try {
         intptr_t slide = _dyld_get_image_vmaddr_slide(0);

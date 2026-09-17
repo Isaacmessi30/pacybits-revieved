@@ -1,12 +1,14 @@
 #import <UIKit/UIKit.h>
+#import <GameKit/GameKit.h>
+#import <mach-o/dyld.h>
 #import "RevivalRuntime.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 
 @interface PBRRevivalBootstrap : NSObject
 + (instancetype)shared;
-- (void)openMode:(NSString *)mode;
-- (void)handleTradingTile:(UITapGestureRecognizer *)gesture;
+- (UIWindow *)gameWindow;
+- (UIViewController *)topPresenter;
 @end
 
 @implementation PBRRevivalBootstrap
@@ -32,103 +34,149 @@
 #pragma clang diagnostic pop
     return nil;
 }
-- (void)openMode:(NSString *)mode {
+- (UIViewController *)topPresenter {
     UIViewController *presenter = [self gameWindow].rootViewController;
     while (presenter.presentedViewController) presenter = presenter.presentedViewController;
-    if (!presenter || [presenter isKindOfClass:UIAlertController.class]) return;
-    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
-    SEL open = NSSelectorFromString(@"openFrom:mode:");
-    if ([launcher respondsToSelector:open]) {
-        ((void (*)(id, SEL, UIViewController *, NSString *))objc_msgSend)(launcher, open, presenter, mode ?: @"random");
-    }
-}
-- (void)handleTradingTile:(UITapGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateEnded) return;
-    NSString *mode = objc_getAssociatedObject(gesture, @selector(handleTradingTile:));
-    if (![mode isKindOfClass:NSString.class] || !mode.length) return;
-    [self openMode:mode];
+    return presenter;
 }
 @end
 
-static NSString *PBRModeForText(NSString *raw) {
-    if (![raw isKindOfClass:NSString.class] || !raw.length) return nil;
-    NSString *text = [raw.lowercaseString stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if ([text containsString:@"use a code"] || [text isEqualToString:@"code"] || [text containsString:@"invite code"]) return @"code";
-    if ([text containsString:@"friend"]) return @"friends";
-    if ([text containsString:@"channel"]) return @"channels";
-    if ([text containsString:@"random"]) return @"random";
+// PACYBITS' original menu and dialogs stay in charge. The only purpose of this
+// flag is to scope the GameKit substitution to a matchmaking attempt that began
+// inside the original Trading menu.
+static CFTimeInterval PBRTradingArmedUntil = 0;
+static IMP PBROriginalTradingMenuTap = NULL;
+static IMP PBROriginalFindMatch = NULL;
+static IMP PBROriginalMatchmakerCancel = NULL;
+
+static BOOL PBRTradingIsArmed(void) {
+    return PBRTradingArmedUntil > CACurrentMediaTime();
+}
+
+static void PBRTradingMenuTap(id receiver, SEL selector, id gesture) {
+    PBRTradingArmedUntil = CACurrentMediaTime() + 180.0;
+    if (PBROriginalTradingMenuTap) {
+        ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(receiver, selector, gesture);
+    }
+}
+
+static id PBRDynamicValue(id object, NSString *selectorName) {
+    if (!object) return nil;
+    SEL selector = NSSelectorFromString(selectorName);
+    if (![object respondsToSelector:selector]) return nil;
+    return ((id (*)(id, SEL))objc_msgSend)(object, selector);
+}
+
+static NSString *PBRPlayerIDFromObject(id player) {
+    for (NSString *selectorName in @[@"gamePlayerID", @"playerID"]) {
+        id value = PBRDynamicValue(player, selectorName);
+        if ([value isKindOfClass:NSString.class] && [value length] > 0) return value;
+    }
     return nil;
 }
 
-static NSString *PBROwnModeForView(UIView *view) {
-    if (!view) return nil;
-    if ([view isKindOfClass:UIButton.class]) {
-        NSString *mode = PBRModeForText([(UIButton *)view titleForState:UIControlStateNormal]);
-        if (mode) return mode;
-    }
-    if ([view isKindOfClass:UILabel.class]) {
-        NSString *mode = PBRModeForText(((UILabel *)view).text);
-        if (mode) return mode;
-    }
-    return PBRModeForText(view.accessibilityLabel);
-}
-
-static UIView *PBRClickableTileForLabel(UIView *label, UIView *menuRoot) {
-    UIView *candidate = label;
-    UIView *fallback = label.superview ?: label;
-    for (NSInteger depth = 0; candidate && candidate != menuRoot && depth < 6; depth++, candidate = candidate.superview) {
-        if (candidate.gestureRecognizers.count > 0 || [candidate isKindOfClass:UIControl.class]) return candidate;
-        if (candidate.superview && candidate.superview != menuRoot) fallback = candidate.superview;
-    }
-    return fallback;
-}
-
-static const void *PBRWiredModeKey = &PBRWiredModeKey;
-
-static void PBRWireTradingMenuView(UIView *view, UIView *root) {
-    NSString *mode = PBROwnModeForView(view);
-    if (mode) {
-        UIView *tile = PBRClickableTileForLabel(view, root);
-        NSString *already = objc_getAssociatedObject(tile, PBRWiredModeKey);
-        if (![already isEqualToString:mode]) {
-            // The original recognizers lead into discontinued Game Center paths.
-            // Remove only the recognizers on the identified tile, not on the whole menu.
-            for (UIGestureRecognizer *old in [tile.gestureRecognizers copy]) {
-                [tile removeGestureRecognizer:old];
-            }
-            tile.userInteractionEnabled = YES;
-            UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:[PBRRevivalBootstrap shared]
-                                                                                   action:@selector(handleTradingTile:)];
-            tap.cancelsTouchesInView = YES;
-            objc_setAssociatedObject(tap, @selector(handleTradingTile:), mode, OBJC_ASSOCIATION_COPY_NONATOMIC);
-            objc_setAssociatedObject(tile, PBRWiredModeKey, mode, OBJC_ASSOCIATION_COPY_NONATOMIC);
-            [tile addGestureRecognizer:tap];
+static NSString *PBRTargetLegacyID(GKMatchRequest *request) {
+    id recipients = PBRDynamicValue(request, @"recipients");
+    if ([recipients isKindOfClass:NSArray.class]) {
+        for (id player in (NSArray *)recipients) {
+            NSString *identifier = PBRPlayerIDFromObject(player);
+            if (identifier.length) return identifier;
         }
     }
-    for (UIView *child in view.subviews) PBRWireTradingMenuView(child, root);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    id oldRecipients = PBRDynamicValue(request, @"playersToInvite");
+#pragma clang diagnostic pop
+    if ([oldRecipients isKindOfClass:NSArray.class]) {
+        for (id value in (NSArray *)oldRecipients) {
+            if ([value isKindOfClass:NSString.class] && [value length] > 0) return value;
+        }
+    }
+    return nil;
 }
 
-static IMP PBROriginalTradingMenuViewDidAppear = NULL;
-static void PBRTradingMenuViewDidAppear(id receiver, SEL selector, BOOL animated) {
-    if (PBROriginalTradingMenuViewDidAppear) {
-        ((void (*)(id, SEL, BOOL))PBROriginalTradingMenuViewDidAppear)(receiver, selector, animated);
+static NSString *PBRLocalLegacyID(void) {
+    @try {
+        intptr_t slide = _dyld_get_image_vmaddr_slide(0);
+        uintptr_t address = (uintptr_t)(0x1012be350ULL + slide);
+        void *raw = *(void **)address;
+        if (!raw) return nil;
+        id helper = (__bridge id)raw;
+        Class expected = NSClassFromString(@"_TtC13PACYBITSFUT2016GameCenterHelper");
+        if (!expected || ![helper isKindOfClass:expected]) return nil;
+        id value = [helper valueForKey:@"uniqueId"];
+        if ([value isKindOfClass:NSString.class] && [value length] > 0) return value;
+    } @catch (NSException *exception) {}
+    return nil;
+}
+
+static void PBRBeginBackendMatch(GKMatchRequest *request) {
+    UIViewController *presenter = [[PBRRevivalBootstrap shared] topPresenter];
+    if (!presenter) return;
+    NSInteger group = request.playerGroup;
+    NSUInteger attributes = request.playerAttributes;
+    NSString *scope = [NSString stringWithFormat:@"g:%ld:a:%lu", (long)group, (unsigned long)attributes];
+    NSString *target = PBRTargetLegacyID(request);
+    NSString *local = PBRLocalLegacyID();
+
+    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    SEL begin = NSSelectorFromString(@"beginOriginalMatchFrom:scope:targetLegacyID:localLegacyID:");
+    if (![launcher respondsToSelector:begin]) return;
+    ((void (*)(id, SEL, UIViewController *, NSString *, NSString *, NSString *))objc_msgSend)(
+        launcher, begin, presenter, scope, target, local);
+}
+
+static void PBRFindMatch(id receiver, SEL selector, GKMatchRequest *request, id completion) {
+    if (!PBRTradingIsArmed() || !request) {
+        if (PBROriginalFindMatch) {
+            ((void (*)(id, SEL, GKMatchRequest *, id))PBROriginalFindMatch)(receiver, selector, request, completion);
+        }
+        return;
     }
-    if (![receiver isKindOfClass:UIViewController.class]) return;
-    UIViewController *controller = (UIViewController *)receiver;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (controller.view.window) PBRWireTradingMenuView(controller.view, controller.view);
-    });
+    // Do not invoke the dead GameKit transport. PACYBITS has already performed
+    // all of its original UI work and built the request; we use that exact
+    // request as the matchmaking discriminator for Firebase/Render.
+    PBRTradingArmedUntil = 0;
+    PBRBeginBackendMatch(request);
+}
+
+static void PBRMatchmakerCancel(id receiver, SEL selector) {
+    if (PBRTradingIsArmed()) {
+        Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+        SEL cancel = NSSelectorFromString(@"cancelOriginalMatch");
+        if ([launcher respondsToSelector:cancel]) {
+            ((void (*)(id, SEL))objc_msgSend)(launcher, cancel);
+        }
+        PBRTradingArmedUntil = 0;
+    }
+    if (PBROriginalMatchmakerCancel) {
+        ((void (*)(id, SEL))PBROriginalMatchmakerCancel)(receiver, selector);
+    }
+}
+
+static void PBRInstallMethodHook(Class cls, SEL selector, IMP replacement, IMP *original) {
+    Method method = class_getInstanceMethod(cls, selector);
+    if (!method) return;
+    IMP previous = method_getImplementation(method);
+    const char *types = method_getTypeEncoding(method);
+    if (class_addMethod(cls, selector, replacement, types)) {
+        *original = previous;
+    } else {
+        *original = method_setImplementation(method, replacement);
+    }
 }
 
 __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         Class menu = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
-        SEL appear = @selector(viewDidAppear:);
-        Method method = class_getInstanceMethod(menu, appear);
-        if (method) {
-            PBROriginalTradingMenuViewDidAppear = method_getImplementation(method);
-            method_setImplementation(method, (IMP)PBRTradingMenuViewDidAppear);
-        }
+        PBRInstallMethodHook(menu, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
+                             (IMP)PBRTradingMenuTap, &PBROriginalTradingMenuTap);
+
+        Class matchmaker = GKMatchmaker.class;
+        PBRInstallMethodHook(matchmaker, NSSelectorFromString(@"findMatchForRequest:withCompletionHandler:"),
+                             (IMP)PBRFindMatch, &PBROriginalFindMatch);
+        PBRInstallMethodHook(matchmaker, NSSelectorFromString(@"cancel"),
+                             (IMP)PBRMatchmakerCancel, &PBROriginalMatchmakerCancel);
     });
 }
 

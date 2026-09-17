@@ -137,9 +137,12 @@ final class OriginalTradingCoordinator {
         if registered.inventoryReady == false {
             let local = try storage.prepareImport(uid: credentials.uid)
             _ = try await client.importLegacyInventory(local, preserveFirstCopy: true)
+        } else if storage.record == nil {
+            let status = try await client.status()
+            try storage.recoverAfterReinstall(uid: credentials.uid, response: status)
         }
         guard storage.record != nil else {
-            throw RevivalFailure("This account already has a collection on another installation.")
+            throw RevivalFailure("The trading collection could not be attached to this installation.")
         }
         return (client, storage)
     }

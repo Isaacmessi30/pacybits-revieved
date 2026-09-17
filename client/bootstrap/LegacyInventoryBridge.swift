@@ -167,6 +167,30 @@ final class RevivalInventoryLedger {
         catch { record = nil; throw error }
         return snapshot
     }
+
+    /// Recreates the local ledger after an app reinstall/update removed
+    /// Application Support while Firebase credentials survived in Keychain.
+    /// Recovery is allowed only when the authenticated server collection exactly
+    /// matches PACYBITS' current persisted collection, so no cards or coins are
+    /// imported, overwritten or duplicated during the re-anchor.
+    func recoverAfterReinstall(uid: String, response: TradingResponse) throws {
+        guard record == nil,
+              response.ok,
+              response.inventoryReady == true,
+              let server = response.inventory,
+              let version = response.inventoryVersion,
+              version > 0,
+              response.preserveFirstCopy == true else {
+            throw RevivalFailure("The saved trading collection cannot be recovered safely.")
+        }
+        let local = try bridge.snapshot()
+        guard local == server else {
+            throw RevivalFailure("Your PACYBITS collection and the saved trading collection are different. No cards or coins were changed.")
+        }
+        record = RevivalLedger(uid: uid, server: server, version: version)
+        do { try save() }
+        catch { record = nil; throw error }
+    }
     func reconcile(_ response: TradingResponse) throws {
         if let before = record?.pendingBefore, let after = record?.pendingAfter {
             try bridge.apply(before: before, after: after)

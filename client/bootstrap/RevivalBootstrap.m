@@ -148,6 +148,8 @@ static void PBRPrepareGoogle(UIViewController *presenter, void (^completion)(BOO
     ((void (*)(id, SEL, UIViewController *, id))objc_msgSend)(launcher, prepare, presenter, completion);
 }
 
+static NSString *PBRNormalizedCode(id receiver);
+
 static void PBRWireTradingMenu(id receiver) {
     if (!receiver || !PBROriginalTradingMenuTap) return;
     for (NSString *getter in @[@"channelsButton", @"friendsButton", @"codeButton", @"randomButton"]) {

@@ -174,10 +174,8 @@ static void PBRCodeSearch(id receiver, SEL selector, id gesture) {
         return;
     }
     PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
-    PBRDirectScopePending = YES;
     ((void (*)(id, SEL, id))PBROriginalCodeSearch)(receiver, selector, gesture);
     PBRBeginScope([@"code:" stringByAppendingString:code], nil);
-    PBRDirectScopePending = NO;
 }
 
 static void PBRChannelsSearch(id receiver, SEL selector, id gesture) {
@@ -190,16 +188,13 @@ static void PBRChannelsSearch(id receiver, SEL selector, id gesture) {
     }
     NSString *scope = [NSString stringWithFormat:@"channel:%ld:%ld", (long)path.section, (long)path.item];
     PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
-    PBRDirectScopePending = YES;
     ((void (*)(id, SEL, id))PBROriginalChannelsSearch)(receiver, selector, gesture);
     PBRBeginScope(scope, nil);
-    PBRDirectScopePending = NO;
 }
 
 static void PBRFriendsButton(id receiver, SEL selector, id gesture) {
     if (!PBROriginalFriendsButton) return;
     PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
-    PBRDirectScopePending = YES;
     ((void (*)(id, SEL, id))PBROriginalFriendsButton)(receiver, selector, gesture);
     NSString *target = PBRInvitedFriendLegacyID();
     if (target.length) {
@@ -209,7 +204,6 @@ static void PBRFriendsButton(id receiver, SEL selector, id gesture) {
         NSIndexPath *row = [table respondsToSelector:@selector(indexPathForSelectedRow)] ? [table indexPathForSelectedRow] : nil;
         if (row) PBRBeginScope([NSString stringWithFormat:@"friends-row:%ld", (long)row.row], nil);
     }
-    PBRDirectScopePending = NO;
 }
 
 static NSString *PBRPlayerIDFromObject(id player) {
@@ -256,7 +250,6 @@ static void PBRFindMatch(id receiver, SEL selector, GKMatchRequest *request, id 
 }
 
 static void PBRMatchForInvite(id receiver, SEL selector, GKInvite *invite, id completion) {
-    if (PBRDirectScopePending) return;
     if (!PBRTradingIsArmed()) {
         if (PBROriginalMatchForInvite) ((void (*)(id, SEL, GKInvite *, id))PBROriginalMatchForInvite)(receiver, selector, invite, completion);
         return;

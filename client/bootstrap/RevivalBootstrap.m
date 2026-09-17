@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import "RevivalRuntime.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 
@@ -98,14 +99,30 @@ __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
 
 NSString *PBRCardLabel(NSString *identifier) {
     @try {
-        Class player = NSClassFromString(@"_TtC13PACYBITSFUT206Player");
-        SEL lookup = NSSelectorFromString(@"objectForPrimaryKey:");
-        if (![player respondsToSelector:lookup]) return nil;
-        id object = ((id (*)(id, SEL, id))objc_msgSend)(player, lookup, identifier);
+        id object = PBRPlayerForIdentifier(identifier);
         if (!object) return nil;
         NSString *name = [object valueForKey:@"name"];
         NSNumber *rating = [object valueForKey:@"rating"];
         if (![name isKindOfClass:NSString.class]) return nil;
         return [NSString stringWithFormat:@"%@ %@", rating ?: @"", name];
+    } @catch (NSException *exception) { return nil; }
+}
+
+id PBRPlayerForIdentifier(NSString *identifier) {
+    @try {
+        Class player = NSClassFromString(@"_TtC13PACYBITSFUT206Player");
+        SEL lookup = NSSelectorFromString(@"objectForPrimaryKey:");
+        if (![player respondsToSelector:lookup]) return nil;
+        id object = ((id (*)(id, SEL, id))objc_msgSend)(player, lookup, identifier);
+        return [object isKindOfClass:player] ? object : nil;
+    } @catch (NSException *exception) { return nil; }
+}
+
+UIViewController *PBRInstantiateOriginalTrading(void) {
+    @try {
+        UIStoryboard *storyboard = [UIStoryboard storyboardWithName:@"Trading" bundle:NSBundle.mainBundle];
+        UIViewController *controller = [storyboard instantiateViewControllerWithIdentifier:@"TradingViewController"];
+        Class expected = NSClassFromString(@"_TtC13PACYBITSFUT2021TradingViewController");
+        return expected && [controller isKindOfClass:expected] ? controller : nil;
     } @catch (NSException *exception) { return nil; }
 }

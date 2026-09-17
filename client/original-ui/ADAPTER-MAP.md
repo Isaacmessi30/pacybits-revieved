@@ -119,3 +119,27 @@ the authoritative inventory and inventoryVersion before returning a completion
 receipt. This avoids treating a room-only confirmation as a collection update.
 Twenty portable client checks pass, including native action order, uncertain
 mutation recovery, peer slot swaps and completed-receipt fetching.
+
+## Original screen bridge (2026-09-17)
+
+`OriginalTradingScreen` now instantiates the existing Trading storyboard controller,
+sets the original helper's opponent profile (`clubName` and `badgeName`), resolves
+card IDs into the game's native Realm Player objects, and invokes the original
+trade event dispatcher. It allocates no replacement controls or layouts. All card
+lookups are checked before a batch changes the screen. Handshake remains excluded
+until local receipt/completion coordination is implemented. Callers must install
+the outbound transport first and restore the helper profile when the screen closes.
+
+The receiver guard at `0x1012bee6c` is the application's foreground-active flag:
+`applicationWillResignActive` clears it at `0x1006c54b0` and
+`applicationDidBecomeActive` sets it at `0x1006c5d30`. It must not be patched as
+if it were a Game Center authentication check.
+
+The original `viewDidAppear` calls `0x10000a88c` at `0x100009c28`; that routine
+populates the trading view. The native name getter (`0x10011d2c0`) reads clubName
+from opponentInfo, and badge getter (`0x10011d0fc`) reads badgeName with a bundled
+fallback. Neither getter requires a fabricated GKPlayer identity.
+
+This bridge is source-stage. The current bootstrap has not yet been replaced by
+an original-menu session coordinator, and native startup/rendering has not been
+executed on a phone. Do not package the prototype panel as this implementation.

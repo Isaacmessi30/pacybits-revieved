@@ -1,0 +1,104 @@
+import UIKit
+import MachO
+
+/// Uses the existing storyboard and native receiver; owns no replacement layout.
+/// The session coordinator must install transport before presenting this screen.
+@MainActor
+final class OriginalTradingScreen {
+    let controller: UIViewController
+    private let slide: Int
+    private let helper: NSObject
+    private let profile: UnsafeMutablePointer<[String:Any]>
+    private let previousProfile: [String:Any]
+    private var restored = false
+    private let receive: @convention(thin) (String, [String:Any]) -> Void
+
+    init(peerClubName: String, badgeName: String = "pacybits_fc_logo_large.png") throws {
+        guard let header = _dyld_get_image_header(0), header.pointee.magic == MH_MAGIC_64 else {
+            throw RevivalFailure("Unsupported game executable.")
+        }
+        let base = UnsafeRawPointer(header)
+        let headerSize = MemoryLayout<mach_header_64>.size
+        let end = headerSize + Int(header.pointee.sizeofcmds)
+        var offset = headerSize
+        var matched = false
+        for _ in 0..<header.pointee.ncmds {
+            guard offset + 8 <= end else { throw RevivalFailure("Invalid executable header.") }
+            let command = base.advanced(by: offset).load(as: load_command.self)
+            guard command.cmdsize >= 8, offset + Int(command.cmdsize) <= end else {
+                throw RevivalFailure("Invalid executable header.")
+            }
+            if command.cmd == LC_UUID && command.cmdsize >= 24 {
+                let bytes = Array(UnsafeRawBufferPointer(start: base.advanced(by: offset + 8), count: 16))
+                matched = bytes == [0x9c,0x6e,0xd5,0x77,0x03,0x5a,0x36,0xd1,0xa0,0x4c,0x47,0x5a,0xcb,0x75,0x53,0xad]
+            }
+            offset += Int(command.cmdsize)
+        }
+        guard matched, offset == end else { throw RevivalFailure("Unsupported original trading screen version.") }
+        slide = _dyld_get_image_vmaddr_slide(0)
+        let entry = UnsafeRawPointer(bitPattern: 0x1006e48b4 + slide)!
+        guard Array(UnsafeRawBufferPointer(start: entry, count: 16)) ==
+                [0xff,0x43,0x04,0xd1,0xfc,0x6f,0x0b,0xa9,0xfa,0x67,0x0c,0xa9,0xf8,0x5f,0x0d,0xa9],
+              let pointer = UnsafeRawPointer(bitPattern: 0x1012be350 + slide)!.load(as: UnsafeRawPointer?.self),
+              let expected = NSClassFromString("_TtC13PACYBITSFUT2016GameCenterHelper"),
+              let object = Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue() as? NSObject,
+              object.isKind(of: expected) else {
+            throw RevivalFailure("The original trading engine is not initialized.")
+        }
+        helper = object
+        let field = UnsafeRawPointer(bitPattern: 0x101297318 + slide)!.load(as: Int.self)
+        guard field >= 16, field < 4096, field % 8 == 0 else {
+            throw RevivalFailure("Unexpected opponent profile layout.")
+        }
+        profile = UnsafeMutableRawPointer(mutating: pointer).advanced(by: field).assumingMemoryBound(to: [String:Any].self)
+        previousProfile = profile.pointee
+        guard let native = PBRInstantiateOriginalTrading() else {
+            throw RevivalFailure("The original Trading storyboard could not be loaded.")
+        }
+        controller = native
+        receive = unsafeBitCast(entry, to: (@convention(thin) (String, [String:Any]) -> Void).self)
+        profile.pointee = ["clubName": String(peerClubName.prefix(40)), "badgeName": badgeName]
+    }
+
+    func restoreProfile() {
+        guard !restored else { return }
+        profile.pointee = previousProfile
+        restored = true
+    }
+
+    func render(_ actions: [OriginalTradeAction]) throws {
+        guard !restored, LegacyOutboundBridge.handle != nil,
+              UIApplication.shared.applicationState == .active,
+              controller.isViewLoaded, controller.view.window != nil,
+              UnsafeRawPointer(bitPattern: 0x1012bee6c + slide)!.load(as: UInt8.self) == 1,
+              UnsafeRawPointer(bitPattern: 0x1012bef00 + slide)!.load(as: UnsafeRawPointer?.self) ==
+                UnsafeRawPointer(Unmanaged.passUnretained(controller).toOpaque()) else {
+            throw RevivalFailure("The original trading screen is not active.")
+        }
+        // Resolve every card before making any visible change. An absent catalog
+        // entry must not leave a half-rendered offer in the acceptance dialog.
+        var messages: [(String, Any)] = []
+        for action in actions {
+            switch action {
+            case .picked(let slot, let id):
+                guard (0..<3).contains(slot), let player = PBRPlayerForIdentifier(id) else {
+                    throw RevivalFailure("A traded card is missing from this game's catalog.")
+                }
+                messages.append(("tradingPickedOutline", ["tag": slot, "player": player] as [String:Any]))
+            case .deleted(let slot):
+                guard (0..<3).contains(slot) else { throw TradingClientError.invalidResponse }
+                messages.append(("tradingDeletedOutline", slot))
+            case .coins(let amount):
+                guard (0...1_000_000_000).contains(amount) else { throw TradingClientError.invalidResponse }
+                messages.append(("tradingCoins", amount))
+            case .ready: messages.append(("tradingReady", ""))
+            case .makeChanges: messages.append(("tradingMakeChanges", ""))
+            case .accept: messages.append(("tradingCompleteTradeAccept", ""))
+            case .cancelAcceptance: messages.append(("tradingCompleteTradeCancel", ""))
+            case .handshake:
+                throw RevivalFailure("Native completion requires a reconciled server receipt.")
+            }
+        }
+        for (type, value) in messages { receive(type, ["value": value]) }
+    }
+}

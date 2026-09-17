@@ -20,6 +20,7 @@ xcrun --sdk iphoneos swiftc -parse-as-library -swift-version 5 \
   "$revival_root/client/original-ui/OriginalTradeOffer.swift" \
   "$revival_root/client/original-ui/OriginalTradeSession.swift" \
   "$revival_root/client/original-ui/OriginalTradePeerState.swift" \
+  "$revival_root/client/original-ui/OriginalTradingScreen.swift" \
   "$revival_root/client/original-ui/LegacyOutboundBridge.swift" \
   "$revival_root/client/bootstrap/LegacyInventoryBridge.swift" \
   "$revival_root/client/bootstrap/RevivalTradingController.swift" \

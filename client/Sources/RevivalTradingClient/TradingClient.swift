@@ -107,6 +107,9 @@ private struct TradeRequest: Encodable {
     var inventory: TradeInventory?
     var preserveFirstCopy: Bool?
     var payload: String?
+    var scope: String?
+    var targetLegacyId: String?
+    var legacyId: String?
 }
 private struct ErrorResponse: Decodable { let error: String }
 
@@ -143,8 +146,8 @@ public actor TradingClient {
     public func status(roomID: String? = nil) async throws -> TradingResponse {
         try await send(TradeRequest(action: "status", roomId: roomID))
     }
-    public func register() async throws -> TradingResponse {
-        try await send(TradeRequest(action: "register"))
+    public func register(legacyID: String? = nil) async throws -> TradingResponse {
+        try await send(TradeRequest(action: "register", legacyId: legacyID))
     }
     public func importLegacyInventory(_ inventory: TradeInventory, preserveFirstCopy: Bool = false) async throws -> TradingResponse {
         try await send(TradeRequest(action: "importLegacyInventory", inventory: inventory, preserveFirstCopy: preserveFirstCopy ? true : nil))
@@ -155,8 +158,8 @@ public actor TradingClient {
     public func joinInvitation(roomID: String) async throws -> TradingResponse {
         try await send(TradeRequest(action: "join", roomId: roomID))
     }
-    public func enterOrRenewQueue() async throws -> TradingResponse {
-        try await send(TradeRequest(action: "queue"))
+    public func enterOrRenewQueue(scope: String = "g:0:a:0", targetLegacyID: String? = nil) async throws -> TradingResponse {
+        try await send(TradeRequest(action: "queue", scope: scope, targetLegacyId: targetLegacyID))
     }
     public func leaveQueue() async throws -> TradingResponse {
         try await send(TradeRequest(action: "leaveQueue"))

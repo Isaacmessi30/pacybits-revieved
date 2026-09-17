@@ -1,7 +1,7 @@
 import UIKit
 
-/// Owns the replacement transport while PACYBITS keeps ownership of the actual
-/// Trading.storyboard, controls, animations and local interaction state.
+/// Owns only the replacement transport. PACYBITS continues to own the original
+/// menu, dialogs, search UI, Trading.storyboard, controls and animations.
 @MainActor
 final class OriginalTradingCoordinator {
     enum Mode { case random, code, friends, channels }
@@ -22,33 +22,58 @@ final class OriginalTradingCoordinator {
     private var nativeSettlementStarted = false
     private var closed = false
     private var firebaseUID: String?
-    private var waitingAlert: UIAlertController?
 
+    /// Retained for compatibility with older test bootstraps. New builds enter
+    /// through beginOriginalMatch after PACYBITS creates its own GKMatchRequest.
     static func open(from presenter: UIViewController, mode: Mode) {
+        let scope: String
+        switch mode {
+        case .random: scope = "g:0:a:0"
+        case .code: scope = "legacy:code"
+        case .friends: scope = "legacy:friends"
+        case .channels: scope = "legacy:channels"
+        }
+        beginOriginalMatch(from: presenter, scope: scope, targetLegacyID: nil, localLegacyID: nil)
+    }
+
+    static func beginOriginalMatch(from presenter: UIViewController,
+                                   scope: String,
+                                   targetLegacyID: String?,
+                                   localLegacyID: String?) {
         guard active == nil else { return }
+        let normalized = String(scope.prefix(128))
+        guard !normalized.isEmpty else { return }
         let coordinator = OriginalTradingCoordinator()
         active = coordinator
         coordinator.presenter = presenter
         coordinator.matchmakingTask = Task { @MainActor in
-            do { try await coordinator.start(mode: mode) }
-            catch is CancellationError { coordinator.cleanup(cancelServer: true) }
-            catch { coordinator.fail(error) }
+            do {
+                try await coordinator.startOriginal(
+                    scope: normalized,
+                    targetLegacyID: targetLegacyID,
+                    localLegacyID: localLegacyID)
+            } catch is CancellationError {
+                coordinator.cleanup(cancelServer: true)
+            } catch {
+                coordinator.fail(error)
+            }
         }
     }
 
-    private func start(mode: Mode) async throws {
-        let (client, storage) = try await connect()
+    static func cancelActiveMatch() {
+        active?.cleanup(cancelServer: true)
+    }
+
+    private func startOriginal(scope: String,
+                               targetLegacyID: String?,
+                               localLegacyID: String?) async throws {
+        let (client, storage) = try await connect(legacyID: localLegacyID)
         api = client
         ledger = storage
-        switch mode {
-        case .random, .channels:
-            try await randomMatch(client)
-        case .code, .friends:
-            try await chooseInvitation(client)
-        }
+        try await scopedMatch(client, scope: scope, targetLegacyID: targetLegacyID)
     }
 
-    private func connect() async throws -> (TradingClient, RevivalInventoryLedger) {
+    private func connect(legacyID: String?) async throws -> (TradingClient, RevivalInventoryLedger) {
         guard let presenter,
               let url = Bundle.main.url(forResource: "RevivalFirebase", withExtension: "plist") else {
             throw RevivalFailure("Firebase configuration is missing from this build.")
@@ -83,7 +108,7 @@ final class OriginalTradingCoordinator {
             endpoint: URL(string: "https://pacybits-revival-trading.onrender.com/trading")!) {
                 try await auth.session()
             }
-        let registered = try await client.register()
+        let registered = try await client.register(legacyID: legacyID)
         let storage = try RevivalInventoryLedger(uid: credentials.uid)
         if registered.inventoryReady == false {
             let local = try storage.prepareImport(uid: credentials.uid)
@@ -102,83 +127,26 @@ final class OriginalTradingCoordinator {
         }
     }
 
-    private func randomMatch(_ client: TradingClient) async throws {
-        showWaiting(title: "Trading", message: "Searching for a trading partner…")
-        var response = try await client.enterOrRenewQueue()
+    private func scopedMatch(_ client: TradingClient,
+                             scope: String,
+                             targetLegacyID: String?) async throws {
+        var response = try await client.enterOrRenewQueue(scope: scope, targetLegacyID: targetLegacyID)
         var renewed = Date()
         while !Task.isCancelled {
             if let room = response.room, room.members.count == 2 {
-                dismissWaiting()
                 try launch(response)
                 return
             }
-            try await Task.sleep(nanoseconds: 1_500_000_000)
+            try await Task.sleep(nanoseconds: 1_250_000_000)
             try await checkPlayer()
             if Date().timeIntervalSince(renewed) >= 20 {
-                response = try await client.enterOrRenewQueue()
+                response = try await client.enterOrRenewQueue(scope: scope, targetLegacyID: targetLegacyID)
                 renewed = Date()
             } else {
                 response = try await client.status(roomID: response.room?.id)
             }
         }
         throw CancellationError()
-    }
-
-    private func chooseInvitation(_ client: TradingClient) async throws {
-        guard let presenter else { throw RevivalFailure("Trading screen is unavailable.") }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let alert = UIAlertController(title: "Trade by code", message: "Create an invite or enter a friend's invite.", preferredStyle: .actionSheet)
-            alert.addAction(UIAlertAction(title: "Create invite", style: .default) { _ in
-                Task { @MainActor in
-                    do { try await self.createInvitation(client); continuation.resume() }
-                    catch { continuation.resume(throwing: error) }
-                }
-            })
-            alert.addAction(UIAlertAction(title: "Enter invite", style: .default) { _ in
-                self.promptForInvitation(client, continuation: continuation)
-            })
-            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
-                continuation.resume(throwing: CancellationError())
-            })
-            presenter.present(alert, animated: true)
-        }
-    }
-
-    private func createInvitation(_ client: TradingClient) async throws {
-        var response = try await client.createInvitation()
-        guard let room = response.room else { throw TradingClientError.invalidResponse }
-        UIPasteboard.general.string = room.id
-        showWaiting(title: "Invite copied", message: "Send the copied invite to your friend. Waiting for them to join…")
-        while !Task.isCancelled {
-            if let current = response.room, current.members.count == 2 {
-                dismissWaiting(); try launch(response); return
-            }
-            try await Task.sleep(nanoseconds: 1_500_000_000)
-            response = try await client.status(roomID: room.id)
-        }
-        throw CancellationError()
-    }
-
-    private func promptForInvitation(_ client: TradingClient,
-                                     continuation: CheckedContinuation<Void, Error>) {
-        guard let presenter else { continuation.resume(throwing: RevivalFailure("Trading screen is unavailable.")); return }
-        let alert = UIAlertController(title: "Enter invite", message: nil, preferredStyle: .alert)
-        alert.addTextField { $0.autocapitalizationType = .none; $0.autocorrectionType = .no }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
-            continuation.resume(throwing: CancellationError())
-        })
-        alert.addAction(UIAlertAction(title: "Join", style: .default) { _ in
-            let code = alert.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            Task { @MainActor in
-                do {
-                    let response = try await client.joinInvitation(roomID: code)
-                    guard response.room?.members.count == 2 else { throw TradingClientError.invalidResponse }
-                    try self.launch(response)
-                    continuation.resume()
-                } catch { continuation.resume(throwing: error) }
-            }
-        })
-        presenter.present(alert, animated: true)
     }
 
     private func validateOffer(_ offer: TradeOffer) throws {
@@ -291,8 +259,6 @@ final class OriginalTradingCoordinator {
                 localHandshakeSent = true
                 try process(response)
             } catch {
-                // A response can be lost after Firebase committed the payload. Read
-                // the room before deciding whether another submission is necessary.
                 let refreshed = try await session.refresh()
                 if let current = refreshed.room,
                    current.handshakes?[current.selfKey] == encoded {
@@ -364,23 +330,6 @@ final class OriginalTradingCoordinator {
         OriginalTradingCoordinator.active = nil
     }
 
-    private func showWaiting(title: String, message: String) {
-        dismissWaiting()
-        guard let presenter else { return }
-        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
-            self.matchmakingTask?.cancel()
-            self.cleanup(cancelServer: true)
-        })
-        waitingAlert = alert
-        presenter.present(alert, animated: true)
-    }
-
-    private func dismissWaiting() {
-        if waitingAlert?.presentingViewController != nil { waitingAlert?.dismiss(animated: true) }
-        waitingAlert = nil
-    }
-
     private func showError(_ error: Error) {
         guard !closed else { return }
         let message: String
@@ -394,7 +343,6 @@ final class OriginalTradingCoordinator {
     }
 
     private func fail(_ error: Error) {
-        dismissWaiting()
         showError(error)
         cleanup(cancelServer: false)
     }
@@ -404,7 +352,6 @@ final class OriginalTradingCoordinator {
         closed = true
         matchmakingTask?.cancel(); matchmakingTask = nil
         pollTask?.cancel(); pollTask = nil
-        dismissWaiting()
         LegacyOutboundBridge.handle = nil
         screen?.restoreProfile()
         if cancelServer, let api {

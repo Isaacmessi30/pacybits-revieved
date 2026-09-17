@@ -4,6 +4,7 @@ export const QUEUE_TTL_MS = 60_000;
 const MAX_COINS = 1_000_000_000;
 const MAX_COPIES = 1_000_000;
 const SAFE_ID = /^[a-zA-Z0-9_-]{1,128}$/;
+const SAFE_SCOPE = /^[a-zA-Z0-9:_-]{1,128}$/;
 const ACTIONS = new Set(['register', 'importLegacyInventory', 'status', 'invite', 'join', 'queue', 'leaveQueue', 'offer', 'ready', 'confirm', 'handshake', 'cancel']);
 
 export class TradeError extends Error {
@@ -21,7 +22,7 @@ export function accountKey(uid) {
   requireValue(typeof uid === 'string' && uid.length > 0 && uid.length <= 128, 'INVALID_UID');
   return `u_${Buffer.from(uid).toString('base64url')}`;
 }
-export function emptyState() { return { version: 1, accounts: {}, rooms: {}, queue: {} }; }
+export function emptyState() { return { version: 1, accounts: {}, rooms: {}, queue: {}, legacyIds: {} }; }
 function account(state, key) {
   const a = state.accounts[key];
   requireValue(a && a.allowed === true && a.banned !== true, 'ACCOUNT_NOT_APPROVED', 403);
@@ -145,7 +146,19 @@ function rateLimit(a, now, action) {
 function execute(state, key, input, now, id) {
   const a = account(state, key);
   switch (input.action) {
-    case 'register': return { inventoryReady: a.inventoryReady !== false, inventoryVersion: a.inventoryVersion ?? 0 };
+    case 'register': {
+      if (input.legacyId !== undefined) {
+        requireValue(typeof input.legacyId === 'string' && SAFE_ID.test(input.legacyId), 'INVALID_LEGACY_ID');
+        const owner = state.legacyIds[input.legacyId];
+        requireValue(!owner || owner === key, 'LEGACY_ID_IN_USE', 409);
+        if (a.legacyId && a.legacyId !== input.legacyId && state.legacyIds[a.legacyId] === key) {
+          delete state.legacyIds[a.legacyId];
+        }
+        a.legacyId = input.legacyId;
+        state.legacyIds[input.legacyId] = key;
+      }
+      return { inventoryReady: a.inventoryReady !== false, inventoryVersion: a.inventoryVersion ?? 0 };
+    }
     case 'importLegacyInventory': {
       requireValue(a.inventoryReady === false && a.inventoryImportedAt === undefined,
         'INVENTORY_ALREADY_INITIALIZED', 409);
@@ -197,18 +210,30 @@ function execute(state, key, input, now, id) {
     }
     case 'queue': {
       requireValue(a.inventoryReady !== false, 'INVENTORY_IMPORT_REQUIRED', 409);
+      const scope = input.scope ?? 'g:0:a:0';
+      requireValue(typeof scope === 'string' && SAFE_SCOPE.test(scope), 'INVALID_MATCH_SCOPE');
+      const target = input.targetLegacyId ?? null;
+      if (target !== null) {
+        requireValue(typeof target === 'string' && SAFE_ID.test(target), 'INVALID_LEGACY_ID');
+        requireValue(!a.legacyId || target !== a.legacyId, 'SELF_TRADE');
+      }
       if (a.activeRoom) return { room: view(state.rooms[a.activeRoom], key), queued: false };
       for (const peer of Object.keys(state.queue).sort((x, y) => state.queue[x].since - state.queue[y].since)) {
         if (peer === key) continue;
         expire(state, peer, now);
-        if (!state.queue[peer]) continue;
+        const peerQueue = state.queue[peer];
+        if (!peerQueue || peerQueue.scope !== scope) continue;
         const other = state.accounts[peer];
         if (!other?.allowed || other.banned || other.activeRoom || other.inventoryReady === false) { delete state.queue[peer]; continue; }
+        if (target && other.legacyId !== target) continue;
+        if (peerQueue.targetLegacyId && peerQueue.targetLegacyId !== a.legacyId) continue;
         account(state, peer);
         delete state.queue[key]; delete state.queue[peer];
         return { room: view(createRoom(state, peer, key, id, now), key), queued: false };
       }
-      state.queue[key] = { since: state.queue[key]?.since ?? now, expiresAt: now + QUEUE_TTL_MS };
+      const old = state.queue[key];
+      state.queue[key] = { since: old?.scope === scope && old?.targetLegacyId === target ? old.since : now,
+        expiresAt: now + QUEUE_TTL_MS, scope, ...(target ? { targetLegacyId: target } : {}) };
       return { room: null, queued: true };
     }
     case 'leaveQueue': delete state.queue[key]; return { queued: false };
@@ -257,8 +282,11 @@ function execute(state, key, input, now, id) {
 export function transition(current, uid, input, now, newRoomId) {
   const state = structuredClone(current ?? emptyState());
   requireValue(state.version === 1, 'UNSUPPORTED_LEDGER_VERSION', 500);
-  state.accounts ??= {}; state.rooms ??= {}; state.queue ??= {};
-  for (const a of Object.values(state.accounts)) a.cards ??= {};
+  state.accounts ??= {}; state.rooms ??= {}; state.queue ??= {}; state.legacyIds ??= {};
+  for (const [key, a] of Object.entries(state.accounts)) {
+    a.cards ??= {};
+    if (a.legacyId && SAFE_ID.test(a.legacyId) && !state.legacyIds[a.legacyId]) state.legacyIds[a.legacyId] = key;
+  }
   for (const room of Object.values(state.rooms)) {
     room.ready ??= {}; room.confirmed ??= {}; room.offers ??= {}; room.handshakes ??= {};
     for (const offer of Object.values(room.offers)) offer.cards ??= [];
@@ -268,7 +296,7 @@ export function transition(current, uid, input, now, newRoomId) {
   try {
     requireValue(plain(input), 'INVALID_REQUEST');
     if (input.action === 'register' && !state.accounts[key]) {
-      requireValue(Object.keys(input).length === 1, 'UNEXPECTED_FIELD');
+      requireValue(Object.keys(input).every(k => ['action', 'legacyId'].includes(k)), 'UNEXPECTED_FIELD');
       state.accounts[key] = { allowed: true, coins: 0, cards: {}, inventoryReady: false,
         inventoryVersion: 0, createdAt: now };
     }
@@ -276,9 +304,9 @@ export function transition(current, uid, input, now, newRoomId) {
     rateLimit(a, now, input.action);
     requireValue(ACTIONS.has(input.action), 'UNKNOWN_ACTION');
     const fields = {
-      register: ['action'], importLegacyInventory: ['action', 'inventory', 'preserveFirstCopy'],
+      register: ['action', 'legacyId'], importLegacyInventory: ['action', 'inventory', 'preserveFirstCopy'],
       status: ['action', 'roomId'], invite: ['action'], join: ['action', 'roomId'],
-      queue: ['action'], leaveQueue: ['action'], cancel: ['action', 'roomId'],
+      queue: ['action', 'scope', 'targetLegacyId'], leaveQueue: ['action'], cancel: ['action', 'roomId'],
       offer: ['action', 'roomId', 'revision', 'offer'], ready: ['action', 'roomId', 'revision'],
       confirm: ['action', 'roomId', 'revision'], handshake: ['action', 'roomId', 'payload']
     };

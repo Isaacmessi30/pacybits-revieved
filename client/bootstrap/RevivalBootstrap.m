@@ -44,7 +44,6 @@
 // PACYBITS remains responsible for every visible trading screen. This layer only
 // replaces authentication and multiplayer transport with Google/Firebase/Render.
 static CFTimeInterval PBRTradingArmedUntil = 0;
-static BOOL PBRDirectScopePending = NO;
 static IMP PBROriginalTradingMenuTap = NULL;
 static IMP PBROriginalCodeSearch = NULL;
 static IMP PBROriginalChannelsSearch = NULL;
@@ -168,6 +167,7 @@ static void PBRTradingMenuTap(id receiver, SEL selector, id gesture) {
 
 static NSString *PBRNormalizedCode(id receiver) {
     id field = PBRDynamicValue(receiver, @"textField");
+    if (![field respondsToSelector:@selector(text)]) field = PBRDynamicValue(receiver, @"text_field");
     NSString *text = [field respondsToSelector:@selector(text)] ? [field text] : nil;
     text = [[text ?: @"" stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] uppercaseString];
     if (text.length < 3 || text.length > 32) return nil;
@@ -256,7 +256,6 @@ static void PBRBeginBackendMatch(GKMatchRequest *request) {
 }
 
 static void PBRFindMatch(id receiver, SEL selector, GKMatchRequest *request, id completion) {
-    if (PBRDirectScopePending) return;
     if (!PBRTradingIsArmed() || !request) {
         if (PBROriginalFindMatch) ((void (*)(id, SEL, GKMatchRequest *, id))PBROriginalFindMatch)(receiver, selector, request, completion);
         return;

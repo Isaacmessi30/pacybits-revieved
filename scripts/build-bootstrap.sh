@@ -7,6 +7,9 @@ revival_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
 xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=15.0 \
   -isysroot "$revival_sdk" -fobjc-arc -fmodules -Wall -Wextra -Werror -Wno-unused-parameter \
   -c "$revival_root/client/bootstrap/RevivalBootstrap.m" -o "$revival_output/bootstrap.o"
+xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=15.0 \
+  -isysroot "$revival_sdk" -c "$revival_root/client/original-ui/LegacySendIsland.s" \
+  -o "$revival_output/LegacySendIsland.o"
 xcrun --sdk iphoneos swiftc -parse-as-library -swift-version 5 \
   -sdk "$revival_sdk" -target arm64-apple-ios15.0 -module-name PBRRevival \
   -import-objc-header "$revival_root/client/bootstrap/RevivalRuntime.h" \

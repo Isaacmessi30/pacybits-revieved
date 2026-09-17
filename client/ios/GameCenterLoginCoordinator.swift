@@ -36,7 +36,7 @@ public final class GameCenterLoginCoordinator {
         }
         let session = try await authentication.signIn(gameCenter: credential, bundleID: bundleID)
         guard player.isAuthenticated, player.gamePlayerID == gameID, player.teamPlayerID == teamID else {
-            await authentication.signOut()
+            try await authentication.signOut()
             throw FirebaseAuthenticationError.sessionChanged
         }
         return session

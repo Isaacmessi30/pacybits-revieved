@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 public struct FirebaseProjectConfiguration: Decodable, Sendable {
     public let projectID: String
@@ -27,7 +28,7 @@ public enum FirebaseAuthenticationError: Error, Equatable {
     case rejected(status: Int)
 }
 
-private struct CachedFirebaseSession: Sendable {
+private struct CachedFirebaseSession: Codable, Sendable {
     let uid: String
     let idToken: String
     let refreshToken: String
@@ -48,23 +49,35 @@ private struct RefreshResponse: Decodable {
 }
 
 /// Uses Firebase's HTTPS API, avoiding a second Firebase runtime inside the legacy IPA.
-/// Sessions are memory-only for now: relaunch requires sign-in again.
+/// Optional secure storage restores sessions across launches.
 public actor FirebaseRESTAuthentication {
     private let apiKey: String
+    private let store: FirebaseSessionStore?
     private let transport: TradingHTTPTransport
     private var cached: CachedFirebaseSession?
     private var refreshing: Task<CachedFirebaseSession, Error>?
     private var generation = 0
 
-    public init(apiKey: String, transport: TradingHTTPTransport = URLSessionTradingTransport()) throws {
+    public init(apiKey: String, transport: TradingHTTPTransport = URLSessionTradingTransport(), store: FirebaseSessionStore? = nil) throws {
         guard !apiKey.isEmpty else { throw FirebaseAuthenticationError.invalidConfiguration }
         self.apiKey = apiKey
         self.transport = transport
+        self.store = store
+        if let data = try store?.load() {
+            guard data.count <= 65536,
+                  let restored = try? JSONDecoder().decode(CachedFirebaseSession.self, from: data),
+                  !restored.uid.isEmpty, !restored.idToken.isEmpty, !restored.refreshToken.isEmpty,
+                  restored.expiresAt.timeIntervalSince1970.isFinite else {
+                try store?.save(nil)
+                return
+            }
+            cached = restored
+        }
     }
 
     public func signIn(googleIDToken: String) async throws -> FirebaseSession {
         guard !googleIDToken.isEmpty else { throw FirebaseAuthenticationError.signInRequired }
-        signOut()
+        try signOut()
         let version = generation
         var request = URLRequest(url: endpoint("https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp"))
         request.httpMethod = "POST"
@@ -84,6 +97,7 @@ public actor FirebaseRESTAuthentication {
         }
         let session = try Self.makeSession(uid: response.localId, token: response.idToken,
                                           refresh: response.refreshToken, expiry: response.expiresIn)
+        try store?.save(JSONEncoder().encode(session))
         cached = session
         return session.publicSession
     }
@@ -95,7 +109,7 @@ public actor FirebaseRESTAuthentication {
               !credential.salt.isEmpty, credential.timestamp > 0 else {
             throw FirebaseAuthenticationError.invalidConfiguration
         }
-        signOut()
+        try signOut()
         let version = generation
         var request = URLRequest(url: endpoint("https://identitytoolkit.googleapis.com/v1/accounts:signInWithGameCenter"))
         request.httpMethod = "POST"
@@ -119,6 +133,7 @@ public actor FirebaseRESTAuthentication {
         }
         let session = try Self.makeSession(uid: response.localId, token: response.idToken,
                                           refresh: response.refreshToken, expiry: response.expiresIn)
+        try store?.save(JSONEncoder().encode(session))
         cached = session
         return session.publicSession
     }
@@ -149,6 +164,7 @@ public actor FirebaseRESTAuthentication {
         do {
             let refreshed = try await task.value
             guard version == generation else { throw FirebaseAuthenticationError.sessionChanged }
+            try store?.save(JSONEncoder().encode(refreshed))
             cached = refreshed
             refreshing = nil
             return refreshed.publicSession
@@ -156,17 +172,21 @@ public actor FirebaseRESTAuthentication {
             if version == generation {
                 refreshing = nil
                 if case FirebaseAuthenticationError.rejected(let status) = error,
-                   [400, 401, 403].contains(status) { cached = nil }
+                   [400, 401, 403].contains(status) {
+                    cached = nil
+                    try store?.save(nil)
+                }
             }
             throw error
         }
     }
 
-    public func signOut() {
+    public func signOut() throws {
         generation += 1
         refreshing?.cancel()
         refreshing = nil
         cached = nil
+        try store?.save(nil)
     }
 
     private func endpoint(_ base: String) -> URL {
@@ -210,4 +230,50 @@ public struct GameCenterCredential: Sendable {
         self.timestamp = timestamp
         self.displayName = displayName
     }
+}
+
+/// Implementations must synchronize access and must not log credential data.
+public protocol FirebaseSessionStore: Sendable {
+    func load() throws -> Data?
+    func save(_ data: Data?) throws
+}
+
+public struct KeychainFirebaseSessionStore: FirebaseSessionStore {
+    private let service: String
+    public init(projectID: String, bundleID: String) {
+        service = bundleID + ".revival.google-session." + projectID
+    }
+    private var query: [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service, kSecAttrAccount as String: "firebase-session",
+         kSecAttrSynchronizable as String: false]
+    }
+    public func load() throws -> Data? {
+        var request = query
+        request[kSecReturnData as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else { throw SessionStorageError(status: status) }
+        return data
+    }
+    public func save(_ data: Data?) throws {
+        guard let data = data else {
+            let status = SecItemDelete(query as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else { throw SessionStorageError(status: status) }
+            return
+        }
+        let values: [String: Any] = [kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        var status = SecItemUpdate(query as CFDictionary, values as CFDictionary)
+        if status == errSecItemNotFound {
+            status = SecItemAdd(query.merging(values) { _, new in new } as CFDictionary, nil)
+        }
+        guard status == errSecSuccess else { throw SessionStorageError(status: status) }
+    }
+}
+public struct SessionStorageError: LocalizedError {
+    public let status: OSStatus
+    public var errorDescription: String? { "Secure sign-in storage is unavailable (\(status)). Unlock your device and try again." }
 }

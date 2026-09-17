@@ -79,7 +79,7 @@ final class RevivalTradingController: UITableViewController {
         let auth: FirebaseRESTAuthentication
         if let existing = authentication { auth = existing }
         else {
-            auth = try FirebaseRESTAuthentication(apiKey: config.apiKey)
+            auth = try FirebaseRESTAuthentication(apiKey: config.apiKey, store: KeychainFirebaseSessionStore(projectID: config.projectID, bundleID: config.bundleID))
             authentication = auth
         }
         let session: FirebaseSession

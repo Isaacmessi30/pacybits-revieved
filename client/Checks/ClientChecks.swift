@@ -23,6 +23,13 @@ private actor CheckSessionBox {
     func change() { uid = "bob" }
 }
 
+private final class CheckSessionStore: FirebaseSessionStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var data: Data?
+    func load() throws -> Data? { lock.lock(); defer { lock.unlock() }; return data }
+    func save(_ value: Data?) throws { lock.lock(); defer { lock.unlock() }; data = value }
+}
+
 @main
 struct ClientChecks {
     static let endpoint = URL(string: "https://example.test/trading")!
@@ -47,6 +54,59 @@ struct ClientChecks {
     }
     static func main() async throws {
         let tests: [(String, () async throws -> Void)] = [
+            ("logout during refresh cannot restore saved credentials", {
+                let store = CheckSessionStore()
+                let http = CheckTransport([(200, signInBody(expiry: 1)), (200, refreshBody)], delay: 30_000_000)
+                let auth = try FirebaseRESTAuthentication(apiKey: "test-key", transport: http, store: store)
+                _ = try await auth.signIn(googleIDToken: "test-google")
+                let refresh = Task { try await auth.session() }
+                while await http.requests.count < 2 { await Task.yield() }
+                try await auth.signOut()
+                do { _ = try await refresh.value; throw CheckFailure.failed("Refresh restored logout") }
+                catch is CancellationError {} catch FirebaseAuthenticationError.sessionChanged {}
+                let saved = try store.load()
+                try check(saved == nil, "Refresh persisted a logged-out account")
+            }),
+            ("saved Google session survives a new authentication instance", {
+                let store = CheckSessionStore()
+                let http = CheckTransport([(200, signInBody())])
+                let first = try FirebaseRESTAuthentication(apiKey: "test-key", transport: http, store: store)
+                _ = try await first.signIn(googleIDToken: "test-google")
+                let restarted = try FirebaseRESTAuthentication(apiKey: "test-key", transport: http, store: store)
+                let restored = try await restarted.session()
+                let count = await http.requests.count
+                try check(restored.uid == "alice" && count == 1, "Relaunch required another login")
+                try await restarted.signOut()
+                let signedOut = try FirebaseRESTAuthentication(apiKey: "test-key", transport: http, store: store)
+                do { _ = try await signedOut.session(); throw CheckFailure.failed("Logout survived restart") }
+                catch FirebaseAuthenticationError.signInRequired {}
+            }),
+            ("expired saved session refreshes and persists rotated credentials", {
+                let store = CheckSessionStore()
+                let http = CheckTransport([(200, signInBody(expiry: 1)), (200, refreshBody)])
+                let first = try FirebaseRESTAuthentication(apiKey: "test-key", transport: http, store: store)
+                _ = try await first.signIn(googleIDToken: "test-google")
+                let restarted = try FirebaseRESTAuthentication(apiKey: "test-key", transport: http, store: store)
+                _ = try await restarted.session()
+                let again = try FirebaseRESTAuthentication(apiKey: "test-key", transport: http, store: store)
+                let restored = try await again.session()
+                let count = await http.requests.count
+                try check(restored.idToken == "new-token" && count == 2, "Rotated session was not saved")
+            }),
+            ("network failure preserves saved login but revocation clears it", {
+                let store = CheckSessionStore()
+                let http = CheckTransport([(200, signInBody(expiry: 1)), (503, "{}"), (400, "{}")])
+                let auth = try FirebaseRESTAuthentication(apiKey: "test-key", transport: http, store: store)
+                _ = try await auth.signIn(googleIDToken: "test-google")
+                do { _ = try await auth.session(); throw CheckFailure.failed("Failed refresh accepted") }
+                catch FirebaseAuthenticationError.rejected(status: 503) {}
+                let retained = try store.load()
+                try check(retained != nil, "Network failure cleared login")
+                do { _ = try await auth.session(); throw CheckFailure.failed("Revoked refresh accepted") }
+                catch FirebaseAuthenticationError.rejected(status: 400) {}
+                let removed = try store.load()
+                try check(removed == nil, "Revoked login remained on disk")
+            }),
             ("completed confirmation fetches inventory before exposing a receipt", {
                 var completed = try JSONSerialization.jsonObject(with: Data(roomBody(revision: 0).utf8)) as! [String:Any]
                 var room = completed["room"] as! [String:Any]
@@ -237,7 +297,7 @@ struct ClientChecks {
                 let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
                 try check(body["signature"] == "AP8=" && body["salt"] == "AQI=", "Bad proof encoding")
                 try check(body["timestamp"] == "123456789" && body["gamePlayerId"] == "game", "Wrong proof fields")
-                await auth.signOut()
+                try await auth.signOut()
                 do { _ = try await auth.session(); throw CheckFailure.failed("Game Center session survived logout") }
                 catch FirebaseAuthenticationError.signInRequired {}
             }),
@@ -292,7 +352,7 @@ struct ClientChecks {
                 let http = CheckTransport([(200, signInBody())])
                 let auth = try FirebaseRESTAuthentication(apiKey: "test-key", transport: http)
                 _ = try await auth.signIn(googleIDToken: "test-google")
-                await auth.signOut()
+                try await auth.signOut()
                 do { _ = try await auth.session(); throw CheckFailure.failed("Session survived logout") }
                 catch FirebaseAuthenticationError.signInRequired {}
             })

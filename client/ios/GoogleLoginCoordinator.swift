@@ -31,9 +31,9 @@ final class GoogleLoginCoordinator {
         return GIDSignIn.sharedInstance.handle(url)
     }
 
-    func signOut(trading: TradingClient) async {
+    func signOut(trading: TradingClient) async throws {
         GIDSignIn.sharedInstance.signOut()
-        await authentication.signOut()
+        try await authentication.signOut()
         await trading.resetSession()
     }
 }

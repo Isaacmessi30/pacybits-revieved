@@ -6,6 +6,7 @@
 @interface PBRRevivalBootstrap : NSObject
 + (instancetype)shared;
 - (void)openMode:(NSString *)mode;
+- (void)handleTradingTile:(UITapGestureRecognizer *)gesture;
 @end
 
 @implementation PBRRevivalBootstrap
@@ -41,49 +42,92 @@
         ((void (*)(id, SEL, UIViewController *, NSString *))objc_msgSend)(launcher, open, presenter, mode ?: @"random");
     }
 }
+- (void)handleTradingTile:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
+    NSString *mode = objc_getAssociatedObject(gesture, @selector(handleTradingTile:));
+    if (![mode isKindOfClass:NSString.class] || !mode.length) return;
+    [self openMode:mode];
+}
 @end
 
-static NSString *PBRVisibleText(UIView *view) {
-    if (!view) return nil;
-    if ([view isKindOfClass:UIButton.class]) {
-        NSString *title = [(UIButton *)view titleForState:UIControlStateNormal];
-        if (title.length) return title;
-    }
-    if ([view isKindOfClass:UILabel.class] && ((UILabel *)view).text.length) return ((UILabel *)view).text;
-    if (view.accessibilityLabel.length) return view.accessibilityLabel;
-    for (UIView *child in view.subviews) {
-        NSString *text = PBRVisibleText(child);
-        if (text.length) return text;
-    }
+static NSString *PBRModeForText(NSString *raw) {
+    if (![raw isKindOfClass:NSString.class] || !raw.length) return nil;
+    NSString *text = [raw.lowercaseString stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if ([text containsString:@"use a code"] || [text isEqualToString:@"code"] || [text containsString:@"invite code"]) return @"code";
+    if ([text containsString:@"friend"]) return @"friends";
+    if ([text containsString:@"channel"]) return @"channels";
+    if ([text containsString:@"random"]) return @"random";
     return nil;
 }
 
-static NSString *PBRModeForGesture(id gesture) {
-    UIView *view = nil;
-    if ([gesture respondsToSelector:NSSelectorFromString(@"view")]) {
-        view = ((id (*)(id, SEL))objc_msgSend)(gesture, NSSelectorFromString(@"view"));
+static NSString *PBROwnModeForView(UIView *view) {
+    if (!view) return nil;
+    if ([view isKindOfClass:UIButton.class]) {
+        NSString *mode = PBRModeForText([(UIButton *)view titleForState:UIControlStateNormal]);
+        if (mode) return mode;
     }
-    NSString *text = [PBRVisibleText(view).lowercaseString stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if ([text containsString:@"code"] || [text containsString:@"invite"]) return @"code";
-    if ([text containsString:@"friend"] || [text containsString:@"friendly"]) return @"friends";
-    if ([text containsString:@"channel"]) return @"channels";
-    if ([text containsString:@"random"] || [text containsString:@"online"]) return @"random";
-    // The original menu has historically used random trading as its primary path.
-    // Unknown labels use that path rather than falling through to dead GameKit.
-    return @"random";
+    if ([view isKindOfClass:UILabel.class]) {
+        NSString *mode = PBRModeForText(((UILabel *)view).text);
+        if (mode) return mode;
+    }
+    return PBRModeForText(view.accessibilityLabel);
 }
 
-static void PBRTradeMenuTap(id receiver, SEL selector, id gesture) {
-    [[PBRRevivalBootstrap shared] openMode:PBRModeForGesture(gesture)];
+static UIView *PBRClickableTileForLabel(UIView *label, UIView *menuRoot) {
+    UIView *candidate = label;
+    UIView *fallback = label.superview ?: label;
+    for (NSInteger depth = 0; candidate && candidate != menuRoot && depth < 6; depth++, candidate = candidate.superview) {
+        if (candidate.gestureRecognizers.count > 0 || [candidate isKindOfClass:UIControl.class]) return candidate;
+        if (candidate.superview && candidate.superview != menuRoot) fallback = candidate.superview;
+    }
+    return fallback;
+}
+
+static const void *PBRWiredModeKey = &PBRWiredModeKey;
+
+static void PBRWireTradingMenuView(UIView *view, UIView *root) {
+    NSString *mode = PBROwnModeForView(view);
+    if (mode) {
+        UIView *tile = PBRClickableTileForLabel(view, root);
+        NSString *already = objc_getAssociatedObject(tile, PBRWiredModeKey);
+        if (![already isEqualToString:mode]) {
+            // The original recognizers lead into discontinued Game Center paths.
+            // Remove only the recognizers on the identified tile, not on the whole menu.
+            for (UIGestureRecognizer *old in [tile.gestureRecognizers copy]) {
+                [tile removeGestureRecognizer:old];
+            }
+            tile.userInteractionEnabled = YES;
+            UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:[PBRRevivalBootstrap shared]
+                                                                                   action:@selector(handleTradingTile:)];
+            tap.cancelsTouchesInView = YES;
+            objc_setAssociatedObject(tap, @selector(handleTradingTile:), mode, OBJC_ASSOCIATION_COPY_NONATOMIC);
+            objc_setAssociatedObject(tile, PBRWiredModeKey, mode, OBJC_ASSOCIATION_COPY_NONATOMIC);
+            [tile addGestureRecognizer:tap];
+        }
+    }
+    for (UIView *child in view.subviews) PBRWireTradingMenuView(child, root);
+}
+
+static IMP PBROriginalTradingMenuViewDidAppear = NULL;
+static void PBRTradingMenuViewDidAppear(id receiver, SEL selector, BOOL animated) {
+    if (PBROriginalTradingMenuViewDidAppear) {
+        ((void (*)(id, SEL, BOOL))PBROriginalTradingMenuViewDidAppear)(receiver, selector, animated);
+    }
+    if (![receiver isKindOfClass:UIViewController.class]) return;
+    UIViewController *controller = (UIViewController *)receiver;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (controller.view.window) PBRWireTradingMenuView(controller.view, controller.view);
+    });
 }
 
 __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         Class menu = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
-        SEL tap = NSSelectorFromString(@"buttonTapHandlerWithGesture:");
-        Method method = class_getInstanceMethod(menu, tap);
-        if (method && method_getNumberOfArguments(method) == 3) {
-            class_replaceMethod(menu, tap, (IMP)PBRTradeMenuTap, method_getTypeEncoding(method));
+        SEL appear = @selector(viewDidAppear:);
+        Method method = class_getInstanceMethod(menu, appear);
+        if (method) {
+            PBROriginalTradingMenuViewDidAppear = method_getImplementation(method);
+            method_setImplementation(method, (IMP)PBRTradingMenuViewDidAppear);
         }
     });
 }

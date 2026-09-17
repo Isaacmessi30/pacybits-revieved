@@ -146,22 +146,14 @@ static void PBRPrepareGoogle(UIViewController *presenter, void (^completion)(BOO
 }
 
 static void PBRTradingMenuTap(id receiver, SEL selector, id gesture) {
-    NSString *mode = PBRMenuMode(receiver, gesture);
-    if (!mode.length || !PBROriginalTradingMenuTap) {
-        if (PBROriginalTradingMenuTap) ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(receiver, selector, gesture);
-        return;
-    }
+    if (!PBROriginalTradingMenuTap) return;
     PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
-    UIViewController *presenter = [receiver isKindOfClass:UIViewController.class] ? receiver : [[PBRRevivalBootstrap shared] topPresenter];
+    UIViewController *presenter = [receiver isKindOfClass:UIViewController.class]
+        ? receiver : [[PBRRevivalBootstrap shared] topPresenter];
     PBRPrepareGoogle(presenter, ^(BOOL ok) {
         if (!ok) { PBRTradingArmedUntil = 0; return; }
         PBRExposeTradingAsConnected();
-        PBRDirectScopePending = [mode isEqualToString:@"random"];
         ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(receiver, selector, gesture);
-        if ([mode isEqualToString:@"random"]) {
-            PBRBeginScope(@"g:0:a:0", nil);
-            PBRDirectScopePending = NO;
-        }
     });
 }
 

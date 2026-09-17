@@ -9,6 +9,7 @@
 + (instancetype)shared;
 - (UIWindow *)gameWindow;
 - (UIViewController *)topPresenter;
+- (void)tradingTileTapped:(UITapGestureRecognizer *)gesture;
 @end
 
 @implementation PBRRevivalBootstrap
@@ -45,12 +46,24 @@
 // replaces authentication and multiplayer transport with Google/Firebase/Render.
 static CFTimeInterval PBRTradingArmedUntil = 0;
 static IMP PBROriginalTradingMenuTap = NULL;
+static IMP PBROriginalTradingMenuViewDidAppear = NULL;
 static IMP PBROriginalCodeSearch = NULL;
 static IMP PBROriginalChannelsSearch = NULL;
 static IMP PBROriginalFriendsButton = NULL;
 static IMP PBROriginalFindMatch = NULL;
 static IMP PBROriginalMatchForInvite = NULL;
 static IMP PBROriginalMatchmakerCancel = NULL;
+
+static BOOL PBRMenuViewHooked = NO;
+static BOOL PBRCodeHooked = NO;
+static BOOL PBRChannelsHooked = NO;
+static BOOL PBRFriendsHooked = NO;
+static BOOL PBRFindMatchHooked = NO;
+static BOOL PBRInviteHooked = NO;
+static BOOL PBRCancelHooked = NO;
+
+static char PBRButtonWiredKey;
+static char PBRGestureControllerKey;
 
 static BOOL PBRTradingIsArmed(void) {
     return PBRTradingArmedUntil > CACurrentMediaTime();
@@ -76,8 +89,6 @@ static id PBRGameCenterHelper(void) {
 }
 
 static void PBRExposeTradingAsConnected(void) {
-    // This is only a compatibility facade for PACYBITS' old UI checks. No Apple
-    // credential or Game Center network request is used by revival trading.
     @try {
         id helper = PBRGameCenterHelper();
         if (!helper) return;
@@ -124,17 +135,50 @@ static void PBRPrepareGoogle(UIViewController *presenter, void (^completion)(BOO
     ((void (*)(id, SEL, UIViewController *, id))objc_msgSend)(launcher, prepare, presenter, completion);
 }
 
-static void PBRTradingMenuTap(id receiver, SEL selector, id gesture) {
-    if (!PBROriginalTradingMenuTap) return;
-    PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
+static void PBRWireTradingMenu(id receiver) {
+    if (!receiver || !PBROriginalTradingMenuTap) return;
+    for (NSString *getter in @[@"channelsButton", @"friendsButton", @"codeButton", @"randomButton"]) {
+        id value = PBRDynamicValue(receiver, getter);
+        if (![value isKindOfClass:UIView.class]) continue;
+        UIView *button = value;
+        if ([objc_getAssociatedObject(button, &PBRButtonWiredKey) boolValue]) continue;
+        for (UIGestureRecognizer *existing in [button.gestureRecognizers copy]) {
+            if ([existing isKindOfClass:UITapGestureRecognizer.class]) [button removeGestureRecognizer:existing];
+        }
+        button.userInteractionEnabled = YES;
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:[PBRRevivalBootstrap shared]
+                                                                              action:@selector(tradingTileTapped:)];
+        objc_setAssociatedObject(tap, &PBRGestureControllerKey,
+                                 [NSValue valueWithNonretainedObject:receiver],
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [button addGestureRecognizer:tap];
+        objc_setAssociatedObject(button, &PBRButtonWiredKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+}
+
+static void PBRTradingMenuViewDidAppear(id receiver, SEL selector, BOOL animated) {
+    if (PBROriginalTradingMenuViewDidAppear) {
+        ((void (*)(id, SEL, BOOL))PBROriginalTradingMenuViewDidAppear)(receiver, selector, animated);
+    }
+    PBRWireTradingMenu(receiver);
+}
+
+@implementation PBRRevivalBootstrap (TradingTiles)
+- (void)tradingTileTapped:(UITapGestureRecognizer *)gesture {
+    NSValue *box = objc_getAssociatedObject(gesture, &PBRGestureControllerKey);
+    id receiver = [box nonretainedObjectValue];
+    if (!receiver || !PBROriginalTradingMenuTap) return;
     UIViewController *presenter = [receiver isKindOfClass:UIViewController.class]
-        ? receiver : [[PBRRevivalBootstrap shared] topPresenter];
+        ? receiver : [self topPresenter];
+    PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
     PBRPrepareGoogle(presenter, ^(BOOL ok) {
         if (!ok) { PBRTradingArmedUntil = 0; return; }
         PBRExposeTradingAsConnected();
-        ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(receiver, selector, gesture);
+        ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(
+            receiver, NSSelectorFromString(@"buttonTapHandlerWithGesture:"), gesture);
     });
 }
+@end
 
 static NSString *PBRNormalizedCode(id receiver) {
     id field = PBRDynamicValue(receiver, @"textField");
@@ -246,37 +290,53 @@ static void PBRMatchmakerCancel(id receiver, SEL selector) {
     if (PBROriginalMatchmakerCancel) ((void (*)(id, SEL))PBROriginalMatchmakerCancel)(receiver, selector);
 }
 
-static void PBRInstallMethodHook(Class cls, SEL selector, IMP replacement, IMP *original) {
+static BOOL PBRInstallMethodHookOnce(Class cls, SEL selector, IMP replacement, IMP *original, BOOL *installed) {
+    if (*installed || !cls) return *installed;
     Method method = class_getInstanceMethod(cls, selector);
-    if (!method) return;
+    if (!method) return NO;
     IMP previous = method_getImplementation(method);
     const char *types = method_getTypeEncoding(method);
     if (class_addMethod(cls, selector, replacement, types)) *original = previous;
     else *original = method_setImplementation(method, replacement);
+    *installed = YES;
+    return YES;
+}
+
+static void PBRInstallRevivalHooks(void) {
+    Class menu = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
+    if (menu && !PBROriginalTradingMenuTap) {
+        Method tap = class_getInstanceMethod(menu, NSSelectorFromString(@"buttonTapHandlerWithGesture:"));
+        if (tap) PBROriginalTradingMenuTap = method_getImplementation(tap);
+    }
+    PBRInstallMethodHookOnce(menu, NSSelectorFromString(@"viewDidAppear:"),
+                             (IMP)PBRTradingMenuViewDidAppear, &PBROriginalTradingMenuViewDidAppear, &PBRMenuViewHooked);
+
+    Class code = NSClassFromString(@"_TtC13PACYBITSFUT2017DialogTradingCode");
+    PBRInstallMethodHookOnce(code, NSSelectorFromString(@"searchTapHandlerWithGesture:"),
+                             (IMP)PBRCodeSearch, &PBROriginalCodeSearch, &PBRCodeHooked);
+    Class channels = NSClassFromString(@"_TtC13PACYBITSFUT2021DialogTradingChannels");
+    PBRInstallMethodHookOnce(channels, NSSelectorFromString(@"searchTapHandlerWithGesture:"),
+                             (IMP)PBRChannelsSearch, &PBROriginalChannelsSearch, &PBRChannelsHooked);
+    Class friends = NSClassFromString(@"_TtC13PACYBITSFUT2020DialogTradingFriends");
+    PBRInstallMethodHookOnce(friends, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
+                             (IMP)PBRFriendsButton, &PBROriginalFriendsButton, &PBRFriendsHooked);
+
+    Class matchmaker = GKMatchmaker.class;
+    PBRInstallMethodHookOnce(matchmaker, NSSelectorFromString(@"findMatchForRequest:withCompletionHandler:"),
+                             (IMP)PBRFindMatch, &PBROriginalFindMatch, &PBRFindMatchHooked);
+    PBRInstallMethodHookOnce(matchmaker, NSSelectorFromString(@"matchForInvite:completionHandler:"),
+                             (IMP)PBRMatchForInvite, &PBROriginalMatchForInvite, &PBRInviteHooked);
+    PBRInstallMethodHookOnce(matchmaker, NSSelectorFromString(@"cancel"),
+                             (IMP)PBRMatchmakerCancel, &PBROriginalMatchmakerCancel, &PBRCancelHooked);
 }
 
 __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        Class menu = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
-        PBRInstallMethodHook(menu, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
-                             (IMP)PBRTradingMenuTap, &PBROriginalTradingMenuTap);
-        Class code = NSClassFromString(@"_TtC13PACYBITSFUT2017DialogTradingCode");
-        PBRInstallMethodHook(code, NSSelectorFromString(@"searchTapHandlerWithGesture:"),
-                             (IMP)PBRCodeSearch, &PBROriginalCodeSearch);
-        Class channels = NSClassFromString(@"_TtC13PACYBITSFUT2021DialogTradingChannels");
-        PBRInstallMethodHook(channels, NSSelectorFromString(@"searchTapHandlerWithGesture:"),
-                             (IMP)PBRChannelsSearch, &PBROriginalChannelsSearch);
-        Class friends = NSClassFromString(@"_TtC13PACYBITSFUT2020DialogTradingFriends");
-        PBRInstallMethodHook(friends, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
-                             (IMP)PBRFriendsButton, &PBROriginalFriendsButton);
-
-        Class matchmaker = GKMatchmaker.class;
-        PBRInstallMethodHook(matchmaker, NSSelectorFromString(@"findMatchForRequest:withCompletionHandler:"),
-                             (IMP)PBRFindMatch, &PBROriginalFindMatch);
-        PBRInstallMethodHook(matchmaker, NSSelectorFromString(@"matchForInvite:completionHandler:"),
-                             (IMP)PBRMatchForInvite, &PBROriginalMatchForInvite);
-        PBRInstallMethodHook(matchmaker, NSSelectorFromString(@"cancel"),
-                             (IMP)PBRMatchmakerCancel, &PBROriginalMatchmakerCancel);
+        PBRInstallRevivalHooks();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ PBRInstallRevivalHooks(); });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ PBRInstallRevivalHooks(); });
     });
 }
 

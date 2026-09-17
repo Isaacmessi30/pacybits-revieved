@@ -36,13 +36,18 @@ public struct TradeRoom: Codable, Equatable, Sendable {
     public let offers: [String: TradeOffer]
     public let ready: [String: Int]
     public let confirmed: [String: Int]
+    public let handshakes: [String: String]?
     public let closedAt: Int64?
 
     enum CodingKeys: String, CodingKey {
-        case id, status, expiresAt, revision, members, offers, ready, confirmed, closedAt
+        case id, status, expiresAt, revision, members, offers, ready, confirmed, handshakes, closedAt
         case selfKey = "self"
     }
     public var isCompleted: Bool { status == "completed" }
+    public var peerHandshake: String? {
+        guard let peer = members.first(where: { $0 != selfKey }) else { return nil }
+        return handshakes?[peer]
+    }
 }
 
 public struct TradingResponse: Decodable, Sendable {
@@ -101,6 +106,7 @@ private struct TradeRequest: Encodable {
     var offer: TradeOffer?
     var inventory: TradeInventory?
     var preserveFirstCopy: Bool?
+    var payload: String?
 }
 private struct ErrorResponse: Decodable { let error: String }
 
@@ -129,7 +135,6 @@ public actor TradingClient {
         self.sessionProvider = sessionProvider
     }
 
-    /// Call on logout/account switch; results from prior in-flight requests are discarded.
     public func resetSession() {
         generation += 1
         uid = nil
@@ -141,7 +146,6 @@ public actor TradingClient {
     public func register() async throws -> TradingResponse {
         try await send(TradeRequest(action: "register"))
     }
-    /// One-time migration of tradeable duplicate counts, not the full card collection.
     public func importLegacyInventory(_ inventory: TradeInventory, preserveFirstCopy: Bool = false) async throws -> TradingResponse {
         try await send(TradeRequest(action: "importLegacyInventory", inventory: inventory, preserveFirstCopy: preserveFirstCopy ? true : nil))
     }
@@ -165,6 +169,9 @@ public actor TradingClient {
     }
     public func confirm(room: TradeRoom) async throws -> TradingResponse {
         try await send(TradeRequest(action: "confirm", roomId: room.id, revision: room.revision))
+    }
+    public func nativeHandshake(roomID: String, payload: String) async throws -> TradingResponse {
+        try await send(TradeRequest(action: "handshake", roomId: roomID, payload: payload))
     }
     public func cancel(roomID: String) async throws -> TradingResponse {
         try await send(TradeRequest(action: "cancel", roomId: roomID))

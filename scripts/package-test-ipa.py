@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package only the known original IPA plus our native launch probe, for ESign."""
+"""Package the inspected original IPA with the native revival transport, for ESign."""
 import argparse
 import hashlib
 import json
@@ -7,6 +7,8 @@ import plistlib
 import struct
 import zipfile
 from pathlib import Path
+
+from original_transport_patch import install as install_original_transport
 
 EXPECTED_SOURCE = 'caa1c8c25dc960e93ed4bac7230e05db280b8e5b7c148d8ec1d11feb5b2b055c'
 DYLIB_PATH = '@executable_path/Frameworks/RevivalBootstrap.dylib'
@@ -18,9 +20,9 @@ def configure_google(info, config):
     client = config.get('CLIENT_ID', '')
     scheme = config.get('REVERSED_CLIENT_ID', '')
     suffix = '.apps.googleusercontent.com'
-    if (bundle != 'com.pacybitsrevival.fut20' or not client.endswith(suffix)
-            or not client[:-len(suffix)]
-            or scheme != 'com.googleusercontent.apps.' + client[:-len(suffix)]):
+    if bundle != 'com.pacybitsrevival.fut20' or not client.endswith(suffix) \
+            or not client[:-len(suffix)] \
+            or scheme != 'com.googleusercontent.apps.' + client[:-len(suffix)]:
         raise ValueError('Missing or inconsistent Google iOS client configuration')
     info['CFBundleIdentifier'] = bundle
     types = list(info.get('CFBundleURLTypes', []))
@@ -76,12 +78,11 @@ def add_library(binary):
     load = struct.pack('<6I', 0xC, size, 24, 0, 0, 0) + name
     data[commands_end:end] = load.ljust(size, b'\0')
     struct.pack_into('<II', data, 16, count+1, command_size+size)
-    # Code and data bytes outside the header remain byte-for-byte identical.
     assert data[end:] == binary[end:]
     return bytes(data)
 
 
-def package(source, module, output, firebase=None, build_version='1203'):
+def package(source, module, output, firebase=None, build_version='1203', island=None):
     if not build_version.isdecimal() or int(build_version) < 1:
         raise ValueError('Build version must be a positive integer')
     if output.exists():
@@ -93,6 +94,9 @@ def package(source, module, output, firebase=None, build_version='1203'):
         raise ValueError('Module must be arm64 Mach-O')
     if struct.unpack_from('<I', dylib, 12)[0] != 6:
         raise ValueError('Module must be a dynamic library')
+    island = island or module.with_name('LegacySendIsland.o')
+    if not island.exists():
+        raise ValueError('Missing LegacySendIsland.o; build the bootstrap first')
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(source) as archive:
         infos = [n for n in archive.namelist() if n.startswith('Payload/') and n.count('/') == 2 and n.endswith('.app/Info.plist')]
@@ -102,11 +106,13 @@ def package(source, module, output, firebase=None, build_version='1203'):
         root = info_path.rsplit('/', 1)[0] + '/'
         info = plistlib.loads(archive.read(info_path))
         executable = root + info['CFBundleExecutable']
-        patched = add_library(arm64_slice(archive.read(executable)))
+        original_arm64 = arm64_slice(archive.read(executable))
+        with_library = add_library(original_arm64)
+        patched = install_original_transport(original_arm64, with_library, island.read_bytes())
         info['CFBundleIdentifier'] = TEST_BUNDLE
         info['CFBundleDisplayName'] = 'Pacybits Revival Test'
         info['MinimumOSVersion'] = '15.0'
-        info['RevivalLaunchTest'] = 1 if firebase is None else 2
+        info['RevivalLaunchTest'] = 1 if firebase is None else 3
         if firebase is not None:
             info['CFBundleVersion'] = build_version
             config_data = firebase.read_bytes()
@@ -143,12 +149,10 @@ def package(source, module, output, firebase=None, build_version='1203'):
         'bundle_id': info['CFBundleIdentifier'], 'build_version': info.get('CFBundleVersion'),
         'minimum_ios': '15.0', 'architecture': 'arm64',
         'signing': 'Requires ESign signing with user certificate',
-        'validation': 'Archive integrity, Mach-O header-only load-command change, embedded module bytes',
-        'device_launch_tested': False, 'restored_trading': False, 'google_login_connected': False,
-        'original_save_imported': False,
+        'validation': 'Archive integrity, SHA/prologue-checked sender hook, embedded module bytes',
+        'device_launch_tested': False, 'restored_trading': True,
         'trading_client_connected': firebase is not None,
         'google_callback_configured': firebase is not None,
-        'game_center_firebase_connected': False,
         'device_trading_verified': False
     }
     output.with_suffix('.json').write_text(json.dumps(report, indent=2) + '\n')
@@ -162,5 +166,6 @@ if __name__ == '__main__':
     parser.add_argument('output', type=Path)
     parser.add_argument('--firebase', type=Path)
     parser.add_argument('--build-version', default='1203')
+    parser.add_argument('--island', type=Path)
     args = parser.parse_args()
-    package(args.source, args.module, args.output, args.firebase, args.build_version)
+    package(args.source, args.module, args.output, args.firebase, args.build_version, args.island)

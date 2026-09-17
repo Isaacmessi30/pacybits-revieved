@@ -2,6 +2,7 @@ name: Client build and backend checks
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,7 +22,7 @@ jobs:
       - run: node --test backend/integration/http.test.js
   ios-client:
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
@@ -34,6 +35,8 @@ jobs:
         run: swift test --package-path client
       - name: Compile unsigned iPhone client library
         run: bash scripts/build-ios-client.sh
+      - name: Compile original-screen bootstrap dylib and sender island
+        run: bash scripts/build-bootstrap.sh
       - name: Compile Google login coordinator with iPhone SDK
         working-directory: client/ios
         run: >-
@@ -42,7 +45,10 @@ jobs:
           CODE_SIGNING_ALLOWED=NO build
       - uses: actions/upload-artifact@v4
         with:
-          name: iphone-client-library-not-an-ipa
-          path: build/ios-client/
+          name: iphone-original-trading-bootstrap
+          path: |
+            build/bootstrap/RevivalBootstrap.dylib
+            build/bootstrap/LegacySendIsland.o
+            build/bootstrap/SHA256.txt
           if-no-files-found: error
           retention-days: 7

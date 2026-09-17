@@ -3,12 +3,9 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 
-// Entry point for the revival trading client.
 @interface PBRRevivalBootstrap : NSObject
-@property(nonatomic, strong) UIButton *button;
 + (instancetype)shared;
-- (void)attach;
-- (void)showStatus;
+- (void)openMode:(NSString *)mode;
 @end
 
 @implementation PBRRevivalBootstrap
@@ -26,7 +23,6 @@
             if (window.isKeyWindow && window.rootViewController) return window;
         }
     }
-    // The original game predates scene-based app lifecycles.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     for (UIWindow *window in UIApplication.sharedApplication.windows) {
@@ -35,46 +31,50 @@
 #pragma clang diagnostic pop
     return nil;
 }
-- (void)attach {
-    UIWindow *window = [self gameWindow];
-    if (!window || self.button.superview == window) return;
-    [self.button removeFromSuperview];
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.button = button;
-    [button setTitle:@"Trading" forState:UIControlStateNormal];
-    [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    button.backgroundColor = [UIColor colorWithRed:0.16 green:0.22 blue:0.55 alpha:0.95];
-    button.titleLabel.font = [UIFont boldSystemFontOfSize:13];
-    button.layer.cornerRadius = 12;
-    button.accessibilityLabel = @"Open revival trading";
-    button.translatesAutoresizingMaskIntoConstraints = NO;
-    [button addTarget:self action:@selector(showStatus) forControlEvents:UIControlEventTouchUpInside];
-    [window addSubview:button];
-    [NSLayoutConstraint activateConstraints:@[
-        [button.trailingAnchor constraintEqualToAnchor:window.safeAreaLayoutGuide.trailingAnchor constant:-12],
-        [button.topAnchor constraintEqualToAnchor:window.safeAreaLayoutGuide.topAnchor constant:8],
-        [button.widthAnchor constraintEqualToConstant:108],
-        [button.heightAnchor constraintEqualToConstant:36]
-    ]];
-}
-- (void)showStatus {
+- (void)openMode:(NSString *)mode {
     UIViewController *presenter = [self gameWindow].rootViewController;
     while (presenter.presentedViewController) presenter = presenter.presentedViewController;
-    if (!presenter || [presenter isKindOfClass:UIAlertController.class] ||
-        [NSStringFromClass(presenter.class) isEqualToString:@"PBRTradingController"] ||
-        ([presenter isKindOfClass:UINavigationController.class] &&
-         [NSStringFromClass(((UINavigationController *)presenter).topViewController.class) isEqualToString:@"PBRTradingController"])) return;
-    Class controller = NSClassFromString(@"PBRTradingController");
-    SEL open = NSSelectorFromString(@"openFrom:");
-    if ([controller respondsToSelector:open]) {
-        ((void (*)(id, SEL, UIViewController *))objc_msgSend)(controller, open, presenter);
+    if (!presenter || [presenter isKindOfClass:UIAlertController.class]) return;
+    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    SEL open = NSSelectorFromString(@"openFrom:mode:");
+    if ([launcher respondsToSelector:open]) {
+        ((void (*)(id, SEL, UIViewController *, NSString *))objc_msgSend)(launcher, open, presenter, mode ?: @"random");
     }
 }
-
 @end
 
+static NSString *PBRVisibleText(UIView *view) {
+    if (!view) return nil;
+    if ([view isKindOfClass:UIButton.class]) {
+        NSString *title = [(UIButton *)view titleForState:UIControlStateNormal];
+        if (title.length) return title;
+    }
+    if ([view isKindOfClass:UILabel.class] && ((UILabel *)view).text.length) return ((UILabel *)view).text;
+    if (view.accessibilityLabel.length) return view.accessibilityLabel;
+    for (UIView *child in view.subviews) {
+        NSString *text = PBRVisibleText(child);
+        if (text.length) return text;
+    }
+    return nil;
+}
+
+static NSString *PBRModeForGesture(id gesture) {
+    UIView *view = nil;
+    if ([gesture respondsToSelector:NSSelectorFromString(@"view")]) {
+        view = ((id (*)(id, SEL))objc_msgSend)(gesture, NSSelectorFromString(@"view"));
+    }
+    NSString *text = [PBRVisibleText(view).lowercaseString stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if ([text containsString:@"code"] || [text containsString:@"invite"]) return @"code";
+    if ([text containsString:@"friend"] || [text containsString:@"friendly"]) return @"friends";
+    if ([text containsString:@"channel"]) return @"channels";
+    if ([text containsString:@"random"] || [text containsString:@"online"]) return @"random";
+    // The original menu has historically used random trading as its primary path.
+    // Unknown labels use that path rather than falling through to dead GameKit.
+    return @"random";
+}
+
 static void PBRTradeMenuTap(id receiver, SEL selector, id gesture) {
-    [[PBRRevivalBootstrap shared] showStatus];
+    [[PBRRevivalBootstrap shared] openMode:PBRModeForGesture(gesture)];
 }
 
 __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
@@ -85,15 +85,6 @@ __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
         if (method && method_getNumberOfArguments(method) == 3) {
             class_replaceMethod(menu, tap, (IMP)PBRTradeMenuTap, method_getTypeEncoding(method));
         }
-        [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification
-            object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notification) {
-                [[PBRRevivalBootstrap shared] attach];
-            }];
-        [NSNotificationCenter.defaultCenter addObserverForName:UIWindowDidBecomeKeyNotification
-            object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notification) {
-                [[PBRRevivalBootstrap shared] attach];
-            }];
-        [[PBRRevivalBootstrap shared] attach];
     });
 }
 
@@ -105,6 +96,28 @@ NSString *PBRCardLabel(NSString *identifier) {
         NSNumber *rating = [object valueForKey:@"rating"];
         if (![name isKindOfClass:NSString.class]) return nil;
         return [NSString stringWithFormat:@"%@ %@", rating ?: @"", name];
+    } @catch (NSException *exception) { return nil; }
+}
+
+NSString *PBRPlayerIdentifier(id player) {
+    @try {
+        if (!player) return nil;
+        Class cls = [player class];
+        NSString *key = nil;
+        SEL primary = NSSelectorFromString(@"primaryKey");
+        if ([cls respondsToSelector:primary]) {
+            id value = ((id (*)(id, SEL))objc_msgSend)(cls, primary);
+            if ([value isKindOfClass:NSString.class]) key = value;
+        }
+        NSArray<NSString *> *keys = key.length ? @[key, @"playerId", @"identifier", @"id"] : @[@"playerId", @"identifier", @"id"];
+        for (NSString *candidate in keys) {
+            @try {
+                id value = [player valueForKey:candidate];
+                if ([value isKindOfClass:NSString.class] && [value length] > 0) return value;
+                if ([value isKindOfClass:NSNumber.class]) return [value stringValue];
+            } @catch (NSException *ignored) {}
+        }
+        return nil;
     } @catch (NSException *exception) { return nil; }
 }
 

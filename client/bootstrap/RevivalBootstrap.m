@@ -43,6 +43,9 @@
 
 @interface PBRRevivalBootstrap (TradingTiles)
 - (void)tradingTileTapped:(UITapGestureRecognizer *)gesture;
+- (void)codeSearchTapped:(UITapGestureRecognizer *)gesture;
+- (void)channelsSearchTapped:(UITapGestureRecognizer *)gesture;
+- (void)friendsSearchTapped:(UITapGestureRecognizer *)gesture;
 @end
 
 // PACYBITS remains responsible for every visible trading screen. This layer only
@@ -50,6 +53,9 @@
 static CFTimeInterval PBRTradingArmedUntil = 0;
 static IMP PBROriginalTradingMenuTap = NULL;
 static IMP PBROriginalTradingMenuViewDidAppear = NULL;
+static IMP PBROriginalCodeDidMoveToWindow = NULL;
+static IMP PBROriginalChannelsDidMoveToWindow = NULL;
+static IMP PBROriginalFriendsDidMoveToWindow = NULL;
 static IMP PBROriginalCodeSearch = NULL;
 static IMP PBROriginalChannelsSearch = NULL;
 static IMP PBROriginalFriendsButton = NULL;
@@ -58,15 +64,16 @@ static IMP PBROriginalMatchForInvite = NULL;
 static IMP PBROriginalMatchmakerCancel = NULL;
 
 static BOOL PBRMenuViewHooked = NO;
-static BOOL PBRCodeHooked = NO;
-static BOOL PBRChannelsHooked = NO;
-static BOOL PBRFriendsHooked = NO;
+static BOOL PBRCodeViewHooked = NO;
+static BOOL PBRChannelsViewHooked = NO;
+static BOOL PBRFriendsViewHooked = NO;
 static BOOL PBRFindMatchHooked = NO;
 static BOOL PBRInviteHooked = NO;
 static BOOL PBRCancelHooked = NO;
 
 static char PBRButtonWiredKey;
 static char PBRGestureControllerKey;
+static char PBRGestureModeKey;
 
 static BOOL PBRTradingIsArmed(void) {
     return PBRTradingArmedUntil > CACurrentMediaTime();
@@ -138,6 +145,8 @@ static void PBRPrepareGoogle(UIViewController *presenter, void (^completion)(BOO
     ((void (*)(id, SEL, UIViewController *, id))objc_msgSend)(launcher, prepare, presenter, completion);
 }
 
+static NSString *PBRNormalizedCode(id receiver);
+
 static void PBRWireTradingMenu(id receiver) {
     if (!receiver || !PBROriginalTradingMenuTap) return;
     for (NSString *getter in @[@"channelsButton", @"friendsButton", @"codeButton", @"randomButton"]) {
@@ -154,6 +163,8 @@ static void PBRWireTradingMenu(id receiver) {
         objc_setAssociatedObject(tap, &PBRGestureControllerKey,
                                  [NSValue valueWithNonretainedObject:receiver],
                                  OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        NSString *mode = [getter stringByReplacingOccurrencesOfString:@"Button" withString:@""];
+        objc_setAssociatedObject(tap, &PBRGestureModeKey, mode, OBJC_ASSOCIATION_COPY_NONATOMIC);
         [button addGestureRecognizer:tap];
         objc_setAssociatedObject(button, &PBRButtonWiredKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
@@ -179,9 +190,89 @@ static void PBRTradingMenuViewDidAppear(id receiver, SEL selector, BOOL animated
         PBRExposeTradingAsConnected();
         ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(
             receiver, NSSelectorFromString(@"buttonTapHandlerWithGesture:"), gesture);
+        NSString *mode = objc_getAssociatedObject(gesture, &PBRGestureModeKey);
+        if ([mode isEqualToString:@"random"]) {
+            PBRBeginScope(@"random", nil);
+        }
     });
 }
+- (void)codeSearchTapped:(UITapGestureRecognizer *)gesture {
+    id receiver = [objc_getAssociatedObject(gesture, &PBRGestureControllerKey) nonretainedObjectValue];
+    if (!receiver || !PBROriginalCodeSearch) return;
+    NSString *code = PBRNormalizedCode(receiver);
+    ((void (*)(id, SEL, id))PBROriginalCodeSearch)(
+        receiver, NSSelectorFromString(@"searchTapHandlerWithGesture:"), gesture);
+    if (code.length) PBRBeginScope([@"code:" stringByAppendingString:code], nil);
+}
+- (void)channelsSearchTapped:(UITapGestureRecognizer *)gesture {
+    id receiver = [objc_getAssociatedObject(gesture, &PBRGestureControllerKey) nonretainedObjectValue];
+    if (!receiver || !PBROriginalChannelsSearch) return;
+    id collection = PBRDynamicValue(receiver, @"collectionView");
+    NSArray *selected = [collection respondsToSelector:@selector(indexPathsForSelectedItems)]
+        ? [collection indexPathsForSelectedItems] : nil;
+    NSIndexPath *path = selected.firstObject;
+    ((void (*)(id, SEL, id))PBROriginalChannelsSearch)(
+        receiver, NSSelectorFromString(@"searchTapHandlerWithGesture:"), gesture);
+    if (path) {
+        PBRBeginScope([NSString stringWithFormat:@"channel:%ld:%ld",
+                       (long)path.section, (long)path.item], nil);
+    }
+}
+- (void)friendsSearchTapped:(UITapGestureRecognizer *)gesture {
+    id receiver = [objc_getAssociatedObject(gesture, &PBRGestureControllerKey) nonretainedObjectValue];
+    if (!receiver || !PBROriginalFriendsButton) return;
+    ((void (*)(id, SEL, id))PBROriginalFriendsButton)(
+        receiver, NSSelectorFromString(@"buttonTapHandlerWithGesture:"), gesture);
+    NSString *target = PBRInvitedFriendLegacyID();
+    if (target.length) {
+        PBRBeginScope(@"friends", target);
+        return;
+    }
+    id table = PBRDynamicValue(receiver, @"tableView");
+    NSIndexPath *row = [table respondsToSelector:@selector(indexPathForSelectedRow)]
+        ? [table indexPathForSelectedRow] : nil;
+    if (row) PBRBeginScope([NSString stringWithFormat:@"friends-row:%ld", (long)row.row], nil);
+}
 @end
+
+static void PBRWireActionButton(id receiver, NSString *getter, SEL action) {
+    id value = PBRDynamicValue(receiver, getter);
+    if (![value isKindOfClass:UIView.class]) return;
+    UIView *button = value;
+    if ([objc_getAssociatedObject(button, &PBRButtonWiredKey) boolValue]) return;
+    for (UIGestureRecognizer *existing in [button.gestureRecognizers copy]) {
+        if ([existing isKindOfClass:UITapGestureRecognizer.class]) [button removeGestureRecognizer:existing];
+    }
+    button.userInteractionEnabled = YES;
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:[PBRRevivalBootstrap shared]
+                                                                          action:action];
+    objc_setAssociatedObject(tap, &PBRGestureControllerKey,
+                             [NSValue valueWithNonretainedObject:receiver],
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [button addGestureRecognizer:tap];
+    objc_setAssociatedObject(button, &PBRButtonWiredKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+static void PBRCodeDidMoveToWindow(id receiver, SEL selector) {
+    if (PBROriginalCodeDidMoveToWindow) {
+        ((void (*)(id, SEL))PBROriginalCodeDidMoveToWindow)(receiver, selector);
+    }
+    if ([receiver window]) PBRWireActionButton(receiver, @"searchButton", @selector(codeSearchTapped:));
+}
+
+static void PBRChannelsDidMoveToWindow(id receiver, SEL selector) {
+    if (PBROriginalChannelsDidMoveToWindow) {
+        ((void (*)(id, SEL))PBROriginalChannelsDidMoveToWindow)(receiver, selector);
+    }
+    if ([receiver window]) PBRWireActionButton(receiver, @"button", @selector(channelsSearchTapped:));
+}
+
+static void PBRFriendsDidMoveToWindow(id receiver, SEL selector) {
+    if (PBROriginalFriendsDidMoveToWindow) {
+        ((void (*)(id, SEL))PBROriginalFriendsDidMoveToWindow)(receiver, selector);
+    }
+    if ([receiver window]) PBRWireActionButton(receiver, @"button", @selector(friendsSearchTapped:));
+}
 
 static NSString *PBRNormalizedCode(id receiver) {
     id field = PBRDynamicValue(receiver, @"textField");
@@ -191,45 +282,6 @@ static NSString *PBRNormalizedCode(id receiver) {
     if (text.length < 3 || text.length > 32) return nil;
     NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"];
     return [[text stringByTrimmingCharactersInSet:allowed] length] == 0 ? text : nil;
-}
-
-static void PBRCodeSearch(id receiver, SEL selector, id gesture) {
-    NSString *code = PBRNormalizedCode(receiver);
-    if (!code.length || !PBROriginalCodeSearch) {
-        if (PBROriginalCodeSearch) ((void (*)(id, SEL, id))PBROriginalCodeSearch)(receiver, selector, gesture);
-        return;
-    }
-    PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
-    ((void (*)(id, SEL, id))PBROriginalCodeSearch)(receiver, selector, gesture);
-    PBRBeginScope([@"code:" stringByAppendingString:code], nil);
-}
-
-static void PBRChannelsSearch(id receiver, SEL selector, id gesture) {
-    id collection = PBRDynamicValue(receiver, @"collectionView");
-    NSArray *selected = [collection respondsToSelector:@selector(indexPathsForSelectedItems)] ? [collection indexPathsForSelectedItems] : nil;
-    NSIndexPath *path = selected.firstObject;
-    if (!path || !PBROriginalChannelsSearch) {
-        if (PBROriginalChannelsSearch) ((void (*)(id, SEL, id))PBROriginalChannelsSearch)(receiver, selector, gesture);
-        return;
-    }
-    NSString *scope = [NSString stringWithFormat:@"channel:%ld:%ld", (long)path.section, (long)path.item];
-    PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
-    ((void (*)(id, SEL, id))PBROriginalChannelsSearch)(receiver, selector, gesture);
-    PBRBeginScope(scope, nil);
-}
-
-static void PBRFriendsButton(id receiver, SEL selector, id gesture) {
-    if (!PBROriginalFriendsButton) return;
-    PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
-    ((void (*)(id, SEL, id))PBROriginalFriendsButton)(receiver, selector, gesture);
-    NSString *target = PBRInvitedFriendLegacyID();
-    if (target.length) {
-        PBRBeginScope(@"friends", target);
-    } else {
-        id table = PBRDynamicValue(receiver, @"tableView");
-        NSIndexPath *row = [table respondsToSelector:@selector(indexPathForSelectedRow)] ? [table indexPathForSelectedRow] : nil;
-        if (row) PBRBeginScope([NSString stringWithFormat:@"friends-row:%ld", (long)row.row], nil);
-    }
 }
 
 static NSString *PBRPlayerIDFromObject(id player) {
@@ -315,14 +367,28 @@ static void PBRInstallRevivalHooks(void) {
                              (IMP)PBRTradingMenuViewDidAppear, &PBROriginalTradingMenuViewDidAppear, &PBRMenuViewHooked);
 
     Class code = NSClassFromString(@"_TtC13PACYBITSFUT2017DialogTradingCode");
-    PBRInstallMethodHookOnce(code, NSSelectorFromString(@"searchTapHandlerWithGesture:"),
-                             (IMP)PBRCodeSearch, &PBROriginalCodeSearch, &PBRCodeHooked);
+    if (code && !PBROriginalCodeSearch) {
+        Method method = class_getInstanceMethod(code, NSSelectorFromString(@"searchTapHandlerWithGesture:"));
+        if (method) PBROriginalCodeSearch = method_getImplementation(method);
+    }
+    PBRInstallMethodHookOnce(code, NSSelectorFromString(@"didMoveToWindow"),
+                             (IMP)PBRCodeDidMoveToWindow, &PBROriginalCodeDidMoveToWindow, &PBRCodeViewHooked);
+
     Class channels = NSClassFromString(@"_TtC13PACYBITSFUT2021DialogTradingChannels");
-    PBRInstallMethodHookOnce(channels, NSSelectorFromString(@"searchTapHandlerWithGesture:"),
-                             (IMP)PBRChannelsSearch, &PBROriginalChannelsSearch, &PBRChannelsHooked);
+    if (channels && !PBROriginalChannelsSearch) {
+        Method method = class_getInstanceMethod(channels, NSSelectorFromString(@"searchTapHandlerWithGesture:"));
+        if (method) PBROriginalChannelsSearch = method_getImplementation(method);
+    }
+    PBRInstallMethodHookOnce(channels, NSSelectorFromString(@"didMoveToWindow"),
+                             (IMP)PBRChannelsDidMoveToWindow, &PBROriginalChannelsDidMoveToWindow, &PBRChannelsViewHooked);
+
     Class friends = NSClassFromString(@"_TtC13PACYBITSFUT2020DialogTradingFriends");
-    PBRInstallMethodHookOnce(friends, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
-                             (IMP)PBRFriendsButton, &PBROriginalFriendsButton, &PBRFriendsHooked);
+    if (friends && !PBROriginalFriendsButton) {
+        Method method = class_getInstanceMethod(friends, NSSelectorFromString(@"buttonTapHandlerWithGesture:"));
+        if (method) PBROriginalFriendsButton = method_getImplementation(method);
+    }
+    PBRInstallMethodHookOnce(friends, NSSelectorFromString(@"didMoveToWindow"),
+                             (IMP)PBRFriendsDidMoveToWindow, &PBROriginalFriendsDidMoveToWindow, &PBRFriendsViewHooked);
 
     Class matchmaker = GKMatchmaker.class;
     PBRInstallMethodHookOnce(matchmaker, NSSelectorFromString(@"findMatchForRequest:withCompletionHandler:"),

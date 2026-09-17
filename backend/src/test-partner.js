@@ -5,6 +5,8 @@ import { accountKey, transition } from './trading.js';
 export function transitionWithTestPartner(current, uid, input, now, id, enabled = false) {
   let result = transition(current, uid, input, now, id);
   if (result.status !== 200) return result;
+
+  // Legacy backend invite path.
   if (enabled && input.action === 'invite') {
     const peerUid = `revival-test-${id}`;
     const peerKey = accountKey(peerUid);
@@ -18,6 +20,37 @@ export function transitionWithTestPartner(current, uid, input, now, id, enabled 
     result.state = joined.state;
     result.state.rooms[id].testPartnerUid = peerUid;
   }
+
+  // Original PACYBITS Code/Channels/Friends UI eventually creates a GameKit
+  // match request. Test 7 forwards its playerGroup/playerAttributes as `scope`.
+  // For live device testing, auto-pair only non-default scoped queues so the
+  // ordinary Random queue is never silently replaced by a simulated player.
+  if (enabled && input.action === 'queue' && input.scope && input.scope !== 'g:0:a:0'
+      && !input.targetLegacyId && !result.body.room) {
+    const peerUid = `revival-test-${id}`;
+    const peerKey = accountKey(peerUid);
+    if (result.state.accounts[peerKey]) throw new Error('Test partner identity collision');
+    result.state.accounts[peerKey] = {
+      allowed: true, coins: 0, cards: {}, inventoryReady: true, inventoryVersion: 0,
+      preserveFirstCopy: true, testPartner: true, createdAt: now
+    };
+    const paired = transition(result.state, peerUid, { action: 'queue', scope: input.scope }, now, id);
+    if (paired.status !== 200 || !paired.body.room) throw new Error('Scoped test partner could not join');
+    result.state = paired.state;
+    const room = result.state.rooms[paired.body.room.id];
+    room.testPartnerUid = peerUid;
+    result.body = {
+      ok: true,
+      room: {
+        id: room.id, status: room.status, expiresAt: room.expiresAt, revision: room.revision,
+        self: accountKey(uid), members: room.members, offers: room.offers,
+        ready: room.ready, confirmed: room.confirmed, handshakes: room.handshakes ?? {},
+        testPartner: true
+      },
+      queued: false
+    };
+  }
+
   const roomId = result.body.room?.id;
   const room = result.state.rooms[roomId];
   if (!room?.testPartnerUid) return result;

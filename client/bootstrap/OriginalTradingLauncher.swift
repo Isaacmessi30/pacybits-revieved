@@ -16,6 +16,35 @@ final class OriginalTradingLauncher: NSObject {
         OriginalTradingCoordinator.open(from: presenter, mode: selected)
     }
 
+    @objc static func prepareTrading(from presenter: UIViewController,
+                                     completion: @escaping (Bool) -> Void) {
+        Task { @MainActor in
+            do {
+                try await OriginalTradingCoordinator.ensureAuthenticated(from: presenter)
+                completion(true)
+            } catch {
+                let alert = UIAlertController(title: "Trading", message: error.localizedDescription, preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                if presenter.presentedViewController == nil { presenter.present(alert, animated: true) }
+                completion(false)
+            }
+        }
+    }
+
+    @objc static func beginScopedMatch(from presenter: UIViewController,
+                                       scope: String,
+                                       targetLegacyID: String?) {
+        OriginalTradingCoordinator.beginOriginalMatch(
+            from: presenter,
+            scope: scope,
+            targetLegacyID: targetLegacyID,
+            localLegacyID: nil)
+    }
+
+    @objc static func isMatchActive() -> Bool {
+        OriginalTradingCoordinator.hasActiveMatch
+    }
+
     @objc static func beginOriginalMatch(from presenter: UIViewController,
                                          scope: String,
                                          targetLegacyID: String?,

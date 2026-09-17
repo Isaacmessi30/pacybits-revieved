@@ -113,3 +113,9 @@ revision changes clear prior readiness/acceptance; repeated polls produce no
 duplicate events. Ready precedes accept, and no handshake is synthesized. It
 rejects offers that change without a revision. These event lists still need the
 version-checked native renderer and original controller lifecycle initialization.
+
+Completed confirmation responses now trigger a read-only status request to obtain
+the authoritative inventory and inventoryVersion before returning a completion
+receipt. This avoids treating a room-only confirmation as a collection update.
+Twenty portable client checks pass, including native action order, uncertain
+mutation recovery, peer slot swaps and completed-receipt fetching.

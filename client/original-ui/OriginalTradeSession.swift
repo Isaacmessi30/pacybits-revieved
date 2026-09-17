@@ -46,7 +46,7 @@ final class OriginalTradeSession {
     private func execute(_ operation: Operation) async throws -> TradingResponse {
         guard let room = snapshot.room else { throw TradingClientError.invalidResponse }
         do {
-            let result: TradingResponse
+            var result: TradingResponse
             switch operation {
             case .refresh:
                 result = try await api.status(roomID: roomID)
@@ -78,6 +78,18 @@ final class OriginalTradeSession {
                         result = try await api.updateOffer(room: room, offer: current)
                     default: throw TradingClientError.invalidResponse
                     }
+                }
+            }
+            if result.room?.isCompleted == true && result.inventory == nil {
+                // Confirmation returns a room, not the authoritative inventory.
+                // Fetch the receipt before any caller can reconcile the local save.
+                result = try await api.status(roomID: roomID)
+                guard result.room?.isCompleted == true, result.inventory != nil,
+                      (result.inventoryVersion ?? 0) > 0 else { throw TradingClientError.invalidResponse }
+            }
+            if result.room?.isCompleted == true {
+                guard result.inventory != nil, (result.inventoryVersion ?? 0) > 0 else {
+                    throw TradingClientError.invalidResponse
                 }
             }
             guard let updated = result.room, updated.id == roomID, updated.selfKey == selfKey,

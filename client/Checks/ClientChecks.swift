@@ -47,6 +47,24 @@ struct ClientChecks {
     }
     static func main() async throws {
         let tests: [(String, () async throws -> Void)] = [
+            ("completed confirmation fetches inventory before exposing a receipt", {
+                var completed = try JSONSerialization.jsonObject(with: Data(roomBody(revision: 0).utf8)) as! [String:Any]
+                var room = completed["room"] as! [String:Any]
+                room["status"] = "completed"
+                completed["room"] = room
+                let confirmation = String(data: try JSONSerialization.data(withJSONObject: completed), encoding: .utf8)!
+                completed["inventory"] = ["coins": 100, "cards": ["cardA": 2]]
+                completed["inventoryVersion"] = 2
+                let receipt = String(data: try JSONSerialization.data(withJSONObject: completed), encoding: .utf8)!
+                let http = CheckTransport([(200, confirmation), (200, receipt)])
+                let session = try OriginalTradeSession(api: client(http), initial: initialRoom(), validateOffer: { _ in })
+                let result = try await session.submit(.accept)
+                try check(result.room?.isCompleted == true && result.inventory?.coins == 100 && result.inventoryVersion == 2, "Exposed incomplete receipt")
+                _ = try await session.submit(.handshake)
+                let requests = await http.requests
+                let actions = try requests.map { (try JSONSerialization.jsonObject(with: $0.httpBody!) as! [String:Any])["action"] as! String }
+                try check(actions == ["confirm", "status"], "Missing receipt read or repeated transfer")
+            }),
             ("peer card swaps clear old positions before rendering replacements", {
                 func state(revision: Int, cards: [String], ready: Bool = false, accepted: Bool = false) throws -> OriginalTradePeerState {
                     var object = try JSONSerialization.jsonObject(with: Data(roomBody(revision: revision).utf8)) as! [String:Any]

@@ -47,6 +47,33 @@ struct ClientChecks {
     }
     static func main() async throws {
         let tests: [(String, () async throws -> Void)] = [
+            ("peer card swaps clear old positions before rendering replacements", {
+                func state(revision: Int, cards: [String], ready: Bool = false, accepted: Bool = false) throws -> OriginalTradePeerState {
+                    var object = try JSONSerialization.jsonObject(with: Data(roomBody(revision: revision).utf8)) as! [String:Any]
+                    var room = object["room"] as! [String:Any]
+                    var offers = room["offers"] as! [String:Any]
+                    offers["bob"] = ["coins": 10, "cards": cards, "slots": [0, 2]]
+                    room["offers"] = offers
+                    room["ready"] = ready ? ["bob": revision] : [:]
+                    room["confirmed"] = accepted ? ["bob": revision] : [:]
+                    object["room"] = room
+                    let result = try JSONDecoder().decode(TradingResponse.self, from: JSONSerialization.data(withJSONObject: object))
+                    return try OriginalTradePeerState(room: result.room!)
+                }
+                let old = try state(revision: 1, cards: ["cardA", "cardB"], ready: true, accepted: true)
+                let new = try state(revision: 2, cards: ["cardB", "cardA"])
+                let events = try new.events(after: old)
+                try check(events == [.makeChanges, .deleted(slot: 0), .deleted(slot: 2),
+                    .picked(slot: 0, cardID: "cardB"), .picked(slot: 2, cardID: "cardA")], "Incorrect swap or readiness event order")
+                let repeated = try new.events(after: new)
+                try check(repeated.isEmpty, "Repeated poll replayed peer events")
+                let confirmed = try state(revision: 2, cards: ["cardB", "cardA"], ready: true, accepted: true)
+                let confirmation = try confirmed.events(after: new)
+                try check(confirmation == [.ready, .accept], "Confirmation skipped readiness or emitted handshake")
+                let malformed = try state(revision: 2, cards: ["cardA", "cardB"])
+                do { _ = try malformed.events(after: new); throw CheckFailure.failed("Offer changed without a revision") }
+                catch TradingClientError.invalidResponse {}
+            }),
             ("native actions wait for the previous server revision", {
                 let http = CheckTransport([(200, try roomBody(revision: 1, coins: 10)),
                                            (200, try roomBody(revision: 2, coins: 20))], delay: 30_000_000)

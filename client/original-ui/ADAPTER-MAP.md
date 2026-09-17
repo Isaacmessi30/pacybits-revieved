@@ -106,3 +106,10 @@ transfer or manufacture a completed result.
 The class returns validated room snapshots; it does not invoke original rendering,
 perform local settlement, or activate the native hook. Its integration checks use
 mock HTTP, and native lifecycle wiring remains outstanding.
+
+`OriginalTradePeerState` now calculates the opponent's native presentation events
+from room snapshots. Changed slots are deleted before replacements are inserted;
+revision changes clear prior readiness/acceptance; repeated polls produce no
+duplicate events. Ready precedes accept, and no handshake is synthesized. It
+rejects offers that change without a revision. These event lists still need the
+version-checked native renderer and original controller lifecycle initialization.

@@ -81,7 +81,9 @@ def add_library(binary):
     return bytes(data)
 
 
-def package(source, module, output, firebase=None):
+def package(source, module, output, firebase=None, build_version='1203'):
+    if not build_version.isdecimal() or int(build_version) < 1:
+        raise ValueError('Build version must be a positive integer')
     if output.exists():
         raise ValueError('Output already exists; choose a new output path')
     if hashlib.sha256(source.read_bytes()).hexdigest() != EXPECTED_SOURCE:
@@ -106,7 +108,7 @@ def package(source, module, output, firebase=None):
         info['MinimumOSVersion'] = '15.0'
         info['RevivalLaunchTest'] = 1 if firebase is None else 2
         if firebase is not None:
-            info['CFBundleVersion'] = '1203'
+            info['CFBundleVersion'] = build_version
             config_data = firebase.read_bytes()
             config = plistlib.loads(config_data)
             if config.get('PROJECT_ID') != 'pacybits---revival' or not config.get('API_KEY'):
@@ -138,7 +140,8 @@ def package(source, module, output, firebase=None):
     report = {
         'output': str(output), 'sha256': hashlib.sha256(output.read_bytes()).hexdigest(),
         'source_sha256': EXPECTED_SOURCE, 'module_sha256': hashlib.sha256(dylib).hexdigest(),
-        'bundle_id': info['CFBundleIdentifier'], 'minimum_ios': '15.0', 'architecture': 'arm64',
+        'bundle_id': info['CFBundleIdentifier'], 'build_version': info.get('CFBundleVersion'),
+        'minimum_ios': '15.0', 'architecture': 'arm64',
         'signing': 'Requires ESign signing with user certificate',
         'validation': 'Archive integrity, Mach-O header-only load-command change, embedded module bytes',
         'device_launch_tested': False, 'restored_trading': False, 'google_login_connected': False,
@@ -158,5 +161,6 @@ if __name__ == '__main__':
     parser.add_argument('module', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--firebase', type=Path)
+    parser.add_argument('--build-version', default='1203')
     args = parser.parse_args()
-    package(args.source, args.module, args.output, args.firebase)
+    package(args.source, args.module, args.output, args.firebase, args.build_version)

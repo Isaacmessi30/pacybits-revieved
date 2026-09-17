@@ -39,19 +39,42 @@ final class LegacyInventoryBridge: OriginalInventoryAccess {
             cursor = cursor.advanced(by: Int(command.cmdsize))
         }
         guard found else { throw RevivalFailure("This game version has no supported collection adapter.") }
-        slide = _dyld_get_image_vmaddr_slide(0)
-        guard UnsafeRawPointer(bitPattern: 0x101268760 + slide)!.load(as: Int.self) == -1,
-              let object = UnsafeRawPointer(bitPattern: 0x1012be658 + slide)!.load(as: UnsafeRawPointer?.self) else {
-            throw RevivalFailure("The game is still loading. Open My Cards, then try Trading again.")
+        let imageSlide = _dyld_get_image_vmaddr_slide(0)
+        slide = imageSlide
+        // Invoke the original lazy global accessors instead of requiring that
+        // another screen happened to initialize these globals first.
+        func originalGlobal(entry: Int, prefix: [UInt8], expected: Int) throws -> UnsafeMutableRawPointer {
+            let address = UnsafeRawPointer(bitPattern: entry + imageSlide)!
+            guard Array(UnsafeRawBufferPointer(start: address, count: prefix.count)) == prefix else {
+                throw RevivalFailure("Collection adapter C03: unsupported storage accessor.")
+            }
+            let accessor = unsafeBitCast(address, to: (@convention(thin) () -> UnsafeMutableRawPointer).self)
+            let result = accessor()
+            guard result == UnsafeMutableRawPointer(bitPattern: expected + imageSlide) else {
+                throw RevivalFailure("Collection adapter C03: unexpected storage location.")
+            }
+            return result
+        }
+        let storageSlot = try originalGlobal(entry: 0x100199d44,
+            prefix: [0x68,0x86,0x00,0xf0,0x08,0x45,0x43,0xf9,0x1f,0x05,0x00,0xb1,0x20,0x01,0x00,0x54],
+            expected: 0x1012be658)
+        guard let object = storageSlot.load(as: UnsafeRawPointer?.self) else {
+            throw RevivalFailure("Collection adapter C02: the original saved-collection storage is unavailable. Report C02; your Google login is still saved.")
+        }
+        let cardSlot = try originalGlobal(entry: 0x10022cafc,
+            prefix: [0xe8,0x81,0x00,0x90,0x08,0xb1,0x43,0xf9,0x1f,0x05,0x00,0xb1,0x20,0x01,0x00,0x54],
+            expected: 0x1012be740)
+        guard cardSlot.load(as: UnsafeRawPointer?.self) != nil else {
+            throw RevivalFailure("Collection adapter C01: the original card dictionary is unavailable after initialization.")
         }
         guard let storage = Unmanaged<AnyObject>.fromOpaque(object).takeUnretainedValue() as? NSObject,
-              storage.isKind(of: NSClassFromString("VALValet") ?? NSObject.self),
+              let expectedClass = NSClassFromString("VALValet"), storage.isKind(of: expectedClass),
               storage.responds(to: NSSelectorFromString("objectForKey:")),
               storage.responds(to: NSSelectorFromString("setObject:forKey:")) else {
             throw RevivalFailure("The original collection storage is unavailable.")
         }
         valet = storage
-        cards = UnsafeMutablePointer<[String:Int]>(bitPattern: 0x1012be740 + slide)!
+        cards = cardSlot.assumingMemoryBound(to: [String:Int].self)
         get = unsafeBitCast(storage.method(for: NSSelectorFromString("objectForKey:")), to: (@convention(c) (AnyObject, Selector, NSString) -> Unmanaged<AnyObject>?).self)
         put = unsafeBitCast(storage.method(for: NSSelectorFromString("setObject:forKey:")), to: (@convention(c) (AnyObject, Selector, NSData, NSString) -> Bool).self)
     }

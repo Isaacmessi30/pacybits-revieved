@@ -66,7 +66,7 @@ final class OriginalTradingScreen {
         restored = true
     }
 
-    func render(_ actions: [OriginalTradeAction]) throws {
+    private func requireActive() throws {
         guard !restored, LegacyOutboundBridge.handle != nil,
               UIApplication.shared.applicationState == .active,
               controller.isViewLoaded, controller.view.window != nil,
@@ -75,8 +75,10 @@ final class OriginalTradingScreen {
                 UnsafeRawPointer(Unmanaged.passUnretained(controller).toOpaque()) else {
             throw RevivalFailure("The original trading screen is not active.")
         }
-        // Resolve every card before making any visible change. An absent catalog
-        // entry must not leave a half-rendered offer in the acceptance dialog.
+    }
+
+    func render(_ actions: [OriginalTradeAction]) throws {
+        try requireActive()
         var messages: [(String, Any)] = []
         for action in actions {
             switch action {
@@ -100,5 +102,15 @@ final class OriginalTradingScreen {
             }
         }
         for (type, value) in messages { receive(type, ["value": value]) }
+    }
+
+    /// Invoked only after the server has completed the room and the ledger has
+    /// staged the exact expected local collection change.
+    func renderHandshake(_ value: [String:Any]) throws {
+        try requireActive()
+        guard Set(value.keys) == Set(["coins", "idsLeft", "idsRight"]) else {
+            throw RevivalFailure("Invalid native completion payload.")
+        }
+        receive("tradingHandshake", ["value": value])
     }
 }

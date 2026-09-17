@@ -208,8 +208,6 @@ final class OriginalTradingCoordinator {
     private func installOutboundBridge() {
         LegacyOutboundBridge.handle = { [weak self] type, value in
             guard let self, !self.closed else { return false }
-            // Always consume trading messages while the replacement session is live;
-            // falling through would call the discontinued Game Center transport.
             if type == "tradingHandshake" {
                 Task { @MainActor in await self.handleHandshake(value) }
                 return true
@@ -234,8 +232,6 @@ final class OriginalTradingCoordinator {
             try process(response)
         } catch {
             showError(error)
-            // An uncertain mutation is deliberately not replayed. A refresh gives
-            // the session a new acknowledged revision before the next user action.
             do { try process(try await session.refresh()) } catch {}
         }
     }
@@ -276,18 +272,36 @@ final class OriginalTradingCoordinator {
         guard !localHandshakeSent, let session, let roomID = peerState?.roomID else { return }
         do {
             let encoded = try encodeHandshake(value)
-            // Completion is authorized by the server receipt, not by the native packet.
             var receipt = completedReceipt
             if receipt == nil || receipt?.room?.isCompleted != true {
                 receipt = try await session.refresh()
                 if let receipt { try process(receipt) }
             }
-            guard let receipt, receipt.room?.isCompleted == true else {
+            guard let receipt, let room = receipt.room, room.isCompleted else {
                 throw RevivalFailure("Waiting for the server to confirm both players.")
             }
-            localHandshakeSent = true
-            let response = try await api?.nativeHandshake(roomID: roomID, payload: encoded)
-            if let response { try process(response) }
+            if room.handshakes?[room.selfKey] == encoded {
+                localHandshakeSent = true
+                try process(receipt)
+                return
+            }
+            guard let api else { throw TradingClientError.invalidResponse }
+            do {
+                let response = try await api.nativeHandshake(roomID: roomID, payload: encoded)
+                localHandshakeSent = true
+                try process(response)
+            } catch {
+                // A response can be lost after Firebase committed the payload. Read
+                // the room before deciding whether another submission is necessary.
+                let refreshed = try await session.refresh()
+                if let current = refreshed.room,
+                   current.handshakes?[current.selfKey] == encoded {
+                    localHandshakeSent = true
+                    try process(refreshed)
+                    return
+                }
+                throw error
+            }
         } catch { showError(error) }
     }
 
@@ -297,7 +311,7 @@ final class OriginalTradingCoordinator {
         nativeSettlementStarted = true
         do {
             let shouldRunNative = try ledger.prepareNativeSettlement(receipt)
-            guard shouldRunNative else { cleanup(cancelServer: false); return }
+            guard shouldRunNative else { finishSuccessfully(); return }
             let value = try decodeHandshake(encoded)
             try screen.renderHandshake(value)
             Task { @MainActor [weak self] in
@@ -311,6 +325,7 @@ final class OriginalTradingCoordinator {
                         try? await Task.sleep(nanoseconds: 250_000_000)
                     }
                 }
+                self.nativeSettlementStarted = false
                 self.showError(RevivalFailure("The confirmed trade could not be verified in the original save."))
             }
         } catch {
@@ -340,13 +355,13 @@ final class OriginalTradingCoordinator {
     }
 
     private func finishSuccessfully() {
-        // PACYBITS owns the visible completion/post-trade animation. We only drop
-        // the replacement transport after its original save has been verified.
         pollTask?.cancel(); pollTask = nil
         LegacyOutboundBridge.handle = nil
         screen?.restoreProfile()
         session = nil
         completedReceipt = nil
+        closed = true
+        OriginalTradingCoordinator.active = nil
     }
 
     private func showWaiting(title: String, message: String) {

@@ -9,7 +9,6 @@
 + (instancetype)shared;
 - (UIWindow *)gameWindow;
 - (UIViewController *)topPresenter;
-- (void)tradingTileTapped:(UITapGestureRecognizer *)gesture;
 @end
 
 @implementation PBRRevivalBootstrap
@@ -40,6 +39,10 @@
     while (presenter.presentedViewController) presenter = presenter.presentedViewController;
     return presenter;
 }
+@end
+
+@interface PBRRevivalBootstrap (TradingTiles)
+- (void)tradingTileTapped:(UITapGestureRecognizer *)gesture;
 @end
 
 // PACYBITS remains responsible for every visible trading screen. This layer only

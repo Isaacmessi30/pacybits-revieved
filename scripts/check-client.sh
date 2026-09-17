@@ -11,6 +11,7 @@ xcrun swiftc -parse-as-library \
   "$revival_root/client/Sources/RevivalTradingClient/GoogleOAuthCallback.swift" \
   "$revival_root/client/original-ui/OriginalTradeProtocol.swift" \
   "$revival_root/client/original-ui/OriginalTradeOffer.swift" \
+  "$revival_root/client/original-ui/OriginalTradeSession.swift" \
   "$revival_root/client/Checks/ClientChecks.swift" \
   -o "$revival_build/client-checks"
 "$revival_build/client-checks"

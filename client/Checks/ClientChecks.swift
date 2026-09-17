@@ -34,8 +34,58 @@ struct ClientChecks {
     private static func client(_ http: CheckTransport) throws -> TradingClient {
         try TradingClient(endpoint: endpoint, transport: http) { FirebaseSession(uid: "alice", idToken: "test-token") }
     }
+    static func roomBody(revision: Int, coins: Int = 0) throws -> String {
+        let offer: [String:Any] = ["coins": coins, "cards": [String](), "slots": [Int]()]
+        let room: [String:Any] = ["id": "room-1", "status": "open", "expiresAt": 9999999999999,
+            "revision": revision, "self": "alice", "members": ["alice", "bob"],
+            "offers": ["alice": offer, "bob": ["coins": 0, "cards": [String]()]],
+            "ready": [String:Int](), "confirmed": [String:Int]()]
+        return String(data: try JSONSerialization.data(withJSONObject: ["ok": true, "room": room]), encoding: .utf8)!
+    }
+    static func initialRoom() throws -> TradingResponse {
+        try JSONDecoder().decode(TradingResponse.self, from: Data(roomBody(revision: 0).utf8))
+    }
     static func main() async throws {
         let tests: [(String, () async throws -> Void)] = [
+            ("native actions wait for the previous server revision", {
+                let http = CheckTransport([(200, try roomBody(revision: 1, coins: 10)),
+                                           (200, try roomBody(revision: 2, coins: 20))], delay: 30_000_000)
+                let session = try OriginalTradeSession(api: client(http), initial: initialRoom(), validateOffer: { _ in })
+                let first = Task { try await session.submit(.coins(10)) }
+                while await http.requests.isEmpty { await Task.yield() }
+                let second = Task { try await session.submit(.coins(20)) }
+                _ = try await first.value
+                _ = try await second.value
+                let requests = await http.requests
+                let bodies = try requests.map { try JSONSerialization.jsonObject(with: $0.httpBody!) as! [String:Any] }
+                try check(bodies.count == 2, "Lost or duplicated a native action")
+                try check(bodies[0]["revision"] as? Int == 0 && bodies[1]["revision"] as? Int == 1, "Used stale revision")
+                try check((bodies[1]["offer"] as? [String:Any])?["coins"] as? Int == 20, "Lost the second offer")
+            }),
+            ("uncertain native mutation requires refresh before another action", {
+                let http = CheckTransport([(503, #"{"error":"TEMPORARILY_UNAVAILABLE"}"#),
+                                           (200, try roomBody(revision: 4)), (200, try roomBody(revision: 4))])
+                let session = try OriginalTradeSession(api: client(http), initial: initialRoom(), validateOffer: { _ in })
+                do { _ = try await session.submit(.coins(10)); throw CheckFailure.failed("Expected server failure") }
+                catch TradingClientError.server(_, _) {}
+                do { _ = try await session.submit(.ready); throw CheckFailure.failed("Mutation used uncertain state") }
+                catch TradingClientError.invalidResponse {}
+                let count = await http.requests.count
+                try check(count == 1, "Mutation was replayed or bypassed refresh")
+                _ = try await session.refresh()
+                _ = try await session.submit(.ready)
+                let last = await http.requests.last!
+                let body = try JSONSerialization.jsonObject(with: last.httpBody!) as! [String:Any]
+                try check(body["action"] as? String == "ready" && body["revision"] as? Int == 4, "Refresh did not restore current revision")
+            }),
+            ("native handshake never authorizes a server transfer", {
+                let http = CheckTransport([])
+                let session = try OriginalTradeSession(api: client(http), initial: initialRoom(), validateOffer: { _ in })
+                let result = try await session.submit(.handshake)
+                try check(result.room?.isCompleted == false, "Handshake manufactured completion")
+                let count = await http.requests.count
+                try check(count == 0, "Handshake submitted a transfer")
+            }),
             ("original card slots survive deletion, sorting and server snapshots", {
                 var offer = OriginalTradeOffer()
                 try offer.apply(.picked(slot: 0, cardID: "cardB"))

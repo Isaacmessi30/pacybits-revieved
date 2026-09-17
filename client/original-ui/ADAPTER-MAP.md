@@ -92,3 +92,17 @@ Receiver begins its handshake branch at `0x1006e522c`, casts envelope.value to
 Coin sign/encoding and the complete acceptance condition are not yet verified;
 do not synthesize this payload or invoke the final inventory mutation from this
 partial map.
+
+## Original action to server session (2026-09-17)
+
+`OriginalTradeSession` translates original pick/delete/coins/ready/accept actions
+into the existing authenticated TradingClient requests. It serializes requests,
+uses the last acknowledged revision, and requires a status refresh after an
+uncertain failure instead of retrying a mutation. Make-changes and cancel-accept
+re-submit the current offer to clear both confirmations. A required local ownership
+check runs before offers, readiness and acceptance. Handshake does not submit a
+transfer or manufacture a completed result.
+
+The class returns validated room snapshots; it does not invoke original rendering,
+perform local settlement, or activate the native hook. Its integration checks use
+mock HTTP, and native lifecycle wiring remains outstanding.

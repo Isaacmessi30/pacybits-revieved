@@ -4,6 +4,8 @@ on:
     branches: [main]
     paths:
       - client/bootstrap/**
+      - client/original-ui/**
+      - client/Sources/RevivalTradingClient/**
       - scripts/build-bootstrap.sh
       - .github/workflows/bootstrap.yml
   workflow_dispatch:

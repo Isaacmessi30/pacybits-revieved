@@ -10,7 +10,13 @@ struct RevivalFailure: LocalizedError {
 /// Specific to the inspected, unencrypted arm64 FUT20 1.2 executable.
 /// Every access happens on the main thread after the original game initialized storage.
 @MainActor
-final class LegacyInventoryBridge {
+protocol OriginalInventoryAccess {
+    func snapshot() throws -> TradeInventory
+    func apply(before: TradeInventory, after: TradeInventory) throws
+}
+
+@MainActor
+final class LegacyInventoryBridge: OriginalInventoryAccess {
     private let slide: Int
     private let valet: NSObject
     private let cards: UnsafeMutablePointer<[String: Int]>
@@ -109,18 +115,21 @@ struct RevivalLedger: Codable {
 
 @MainActor
 final class RevivalInventoryLedger {
-    let bridge: LegacyInventoryBridge
+    let bridge: OriginalInventoryAccess
     let file: URL
     var record: RevivalLedger?
-    init(uid: String) throws {
-        bridge = try LegacyInventoryBridge()
-        let directory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        file = directory.appendingPathComponent("revival-trading-ledger.json")
-        if FileManager.default.fileExists(atPath: file.path) {
-            record = try JSONDecoder().decode(RevivalLedger.self, from: Data(contentsOf: file))
+    init(uid: String, bridge: OriginalInventoryAccess? = nil, file: URL? = nil) throws {
+        self.bridge = try bridge ?? LegacyInventoryBridge()
+        if let file = file { self.file = file }
+        else {
+            let directory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            self.file = directory.appendingPathComponent("revival-trading-ledger.json")
+        }
+        if FileManager.default.fileExists(atPath: self.file.path) {
+            record = try JSONDecoder().decode(RevivalLedger.self, from: Data(contentsOf: self.file))
             guard record?.uid == uid else { throw RevivalFailure("This collection is linked to another trading account.") }
             if let before = record?.pendingBefore, let after = record?.pendingAfter {
-                try bridge.apply(before: before, after: after)
+                try self.bridge.apply(before: before, after: after)
                 record?.pendingBefore = nil; record?.pendingAfter = nil
                 try save()
             }
@@ -131,17 +140,54 @@ final class RevivalInventoryLedger {
         if let record = record { return record.server }
         let snapshot = try bridge.snapshot()
         record = RevivalLedger(uid: uid, server: snapshot, version: 1)
-        try save()
+        do { try save() }
+        catch { record = nil; throw error }
         return snapshot
     }
     func reconcile(_ response: TradingResponse) throws {
-        guard let server = response.inventory, let version = response.inventoryVersion, var old = record,
+        if let before = record?.pendingBefore, let after = record?.pendingAfter {
+            try bridge.apply(before: before, after: after)
+            try finishNativeSettlement()
+        }
+        guard try stageSettlement(response) else { return }
+        guard let before = record?.pendingBefore, let after = record?.pendingAfter else {
+            throw RevivalFailure("Trade recovery record is incomplete.")
+        }
+        try bridge.apply(before: before, after: after)
+        try finishNativeSettlement()
+    }
+
+    /// Persist the expected change before allowing the ORIGINAL completion routine
+    /// to update the collection. False means this receipt was already accounted for;
+    /// callers must not run the original transfer again in that case.
+    func prepareNativeSettlement(_ response: TradingResponse) throws -> Bool {
+        guard response.room?.isCompleted == true, let version = response.inventoryVersion,
+              let old = record, old.version > 0, old.version < Int.max,
+              version == old.version || version == old.version + 1 else {
+            throw RevivalFailure("The native trade requires its current, completed server receipt.")
+        }
+        return try stageSettlement(response)
+    }
+
+    private func stageSettlement(_ response: TradingResponse) throws -> Bool {
+        guard record?.pendingBefore == nil, record?.pendingAfter == nil else {
+            throw RevivalFailure("A previous trade is awaiting save verification.")
+        }
+        guard response.ok, let server = response.inventory, let version = response.inventoryVersion, var old = record,
               response.preserveFirstCopy == true, version >= old.version else {
             throw RevivalFailure("This server collection is not compatible with this device. No save was changed.")
         }
-        if server == old.server && version == old.version { return }
+        func valid(_ inventory: TradeInventory) -> Bool {
+            (0...1_000_000_000).contains(inventory.coins) && inventory.cards.count <= 30000 &&
+            inventory.cards.allSatisfy { !$0.key.isEmpty && (1...1_000_000).contains($0.value) }
+        }
+        guard valid(server), valid(old.server) else {
+            throw RevivalFailure("Invalid server collection. No save was changed.")
+        }
+        if server == old.server && version == old.version { return false }
         guard version > old.version else { throw RevivalFailure("Server collection changed without a new revision.") }
         let before = try bridge.snapshot()
+        guard valid(before) else { throw RevivalFailure("Invalid local collection. No save was changed.") }
         var values = before.cards
         for key in Set(old.server.cards.keys).union(server.cards.keys) {
             let next = (values[key] ?? 0) + (server.cards[key] ?? 0) - (old.server.cards[key] ?? 0)
@@ -152,8 +198,22 @@ final class RevivalInventoryLedger {
         guard (0...1_000_000_000).contains(coins) else { throw RevivalFailure("Coin balance conflict. Trade recovery is paused.") }
         let after = TradeInventory(coins: coins, cards: values)
         old.server = server; old.version = version; old.pendingBefore = before; old.pendingAfter = after
-        record = old; try save()
-        try bridge.apply(before: before, after: after)
-        record?.pendingBefore = nil; record?.pendingAfter = nil; try save()
+        let previous = record
+        record = old
+        do { try save() }
+        catch { record = previous; throw error }
+        return true
+    }
+
+    /// Observe the native save; this method never applies the transfer a second time.
+    func finishNativeSettlement() throws {
+        guard let expected = record?.pendingAfter, record?.pendingBefore != nil,
+              try bridge.snapshot() == expected else {
+            throw RevivalFailure("The original game save does not match the confirmed trade. Recovery is paused.")
+        }
+        let previous = record
+        record?.pendingBefore = nil; record?.pendingAfter = nil
+        do { try save() }
+        catch { record = previous; throw error }
     }
 }

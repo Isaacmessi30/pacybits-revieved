@@ -23,3 +23,11 @@ xcrun swiftc -parse-as-library \
   "$revival_root/client/Checks/LegacyBridgeChecks.swift" \
   -o "$revival_build/legacy-bridge-checks"
 "$revival_build/legacy-bridge-checks"
+xcrun swiftc -parse-as-library \
+  -target "$(uname -m)-apple-macos12.0" \
+  -module-cache-path "${TMPDIR:-/tmp}/pacybits-revival-swift-modules" \
+  "$revival_root/client/Sources/RevivalTradingClient/TradingClient.swift" \
+  "$revival_root/client/bootstrap/LegacyInventoryBridge.swift" \
+  "$revival_root/client/Checks/NativeSettlementChecks.swift" \
+  -o "$revival_build/native-settlement-checks"
+"$revival_build/native-settlement-checks"

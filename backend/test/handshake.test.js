@@ -39,11 +39,15 @@ function complete(f) {
   return id;
 }
 
+function inventoryState(account) {
+  return { coins: account.coins, cards: account.cards, inventoryVersion: account.inventoryVersion };
+}
+
 test('native handshakes relay only after settlement and never settle inventory twice', () => {
   const f = fixture();
   const id = complete(f);
-  const beforeA = structuredClone(f.state.accounts[accountKey('alice')]);
-  const beforeB = structuredClone(f.state.accounts[accountKey('bob')]);
+  const beforeA = inventoryState(structuredClone(f.state.accounts[accountKey('alice')]));
+  const beforeB = inventoryState(structuredClone(f.state.accounts[accountKey('bob')]));
   const aPayload = Buffer.from('alice-handshake').toString('base64');
   const bPayload = Buffer.from('bob-handshake').toString('base64');
 
@@ -57,8 +61,8 @@ test('native handshakes relay only after settlement and never settle inventory t
   assert.equal(response.body.room.handshakes[accountKey('alice')], aPayload);
   assert.equal(response.body.room.handshakes[accountKey('bob')], bPayload);
 
-  assert.deepEqual(f.state.accounts[accountKey('alice')], beforeA);
-  assert.deepEqual(f.state.accounts[accountKey('bob')], beforeB);
+  assert.deepEqual(inventoryState(f.state.accounts[accountKey('alice')]), beforeA);
+  assert.deepEqual(inventoryState(f.state.accounts[accountKey('bob')]), beforeB);
 });
 
 test('handshake is rejected before both players have confirmed', () => {

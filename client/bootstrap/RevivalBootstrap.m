@@ -284,45 +284,6 @@ static NSString *PBRNormalizedCode(id receiver) {
     return [[text stringByTrimmingCharactersInSet:allowed] length] == 0 ? text : nil;
 }
 
-static void PBRCodeSearch(id receiver, SEL selector, id gesture) {
-    NSString *code = PBRNormalizedCode(receiver);
-    if (!code.length || !PBROriginalCodeSearch) {
-        if (PBROriginalCodeSearch) ((void (*)(id, SEL, id))PBROriginalCodeSearch)(receiver, selector, gesture);
-        return;
-    }
-    PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
-    ((void (*)(id, SEL, id))PBROriginalCodeSearch)(receiver, selector, gesture);
-    PBRBeginScope([@"code:" stringByAppendingString:code], nil);
-}
-
-static void PBRChannelsSearch(id receiver, SEL selector, id gesture) {
-    id collection = PBRDynamicValue(receiver, @"collectionView");
-    NSArray *selected = [collection respondsToSelector:@selector(indexPathsForSelectedItems)] ? [collection indexPathsForSelectedItems] : nil;
-    NSIndexPath *path = selected.firstObject;
-    if (!path || !PBROriginalChannelsSearch) {
-        if (PBROriginalChannelsSearch) ((void (*)(id, SEL, id))PBROriginalChannelsSearch)(receiver, selector, gesture);
-        return;
-    }
-    NSString *scope = [NSString stringWithFormat:@"channel:%ld:%ld", (long)path.section, (long)path.item];
-    PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
-    ((void (*)(id, SEL, id))PBROriginalChannelsSearch)(receiver, selector, gesture);
-    PBRBeginScope(scope, nil);
-}
-
-static void PBRFriendsButton(id receiver, SEL selector, id gesture) {
-    if (!PBROriginalFriendsButton) return;
-    PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
-    ((void (*)(id, SEL, id))PBROriginalFriendsButton)(receiver, selector, gesture);
-    NSString *target = PBRInvitedFriendLegacyID();
-    if (target.length) {
-        PBRBeginScope(@"friends", target);
-    } else {
-        id table = PBRDynamicValue(receiver, @"tableView");
-        NSIndexPath *row = [table respondsToSelector:@selector(indexPathForSelectedRow)] ? [table indexPathForSelectedRow] : nil;
-        if (row) PBRBeginScope([NSString stringWithFormat:@"friends-row:%ld", (long)row.row], nil);
-    }
-}
-
 static NSString *PBRPlayerIDFromObject(id player) {
     for (NSString *selectorName in @[@"gamePlayerID", @"playerID"]) {
         id value = PBRDynamicValue(player, selectorName);

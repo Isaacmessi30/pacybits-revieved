@@ -95,6 +95,7 @@ static IMP PBROriginalWishlistCardsSetter = NULL;
 static IMP PBROriginalMessageDoneTap = NULL;
 static IMP PBROriginalWishlistDoneTap = NULL;
 static NSMutableArray<NSString *> *PBRCachedWishlistIdentifiers = nil;
+static __weak UIViewController *PBRLastTradingMenuController = nil;
 
 static BOOL PBRMenuTapHooked = NO;
 static BOOL PBRCodeViewHooked = NO;
@@ -367,6 +368,9 @@ static NSString *PBRTradingModeForGesture(id receiver, UIGestureRecognizer *gest
 }
 
 static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer *gesture) {
+    if ([receiver isKindOfClass:UIViewController.class]) {
+        PBRLastTradingMenuController = (UIViewController *)receiver;
+    }
     NSString *mode = PBRTradingModeForGesture(receiver, gesture);
     if (!mode.length) {
         if (PBROriginalTradingMenuTap) {
@@ -860,6 +864,18 @@ static void PBRTradingLeaveTap(id receiver, SEL selector, id gesture) {
         }
 
         dispatch_async(dispatch_get_main_queue(), ^{
+            UIViewController *rememberedMenu = PBRLastTradingMenuController;
+            if (rememberedMenu) {
+                UINavigationController *rememberedNav = rememberedMenu.navigationController;
+                UITabBarController *rememberedTabs = rememberedMenu.tabBarController;
+                if (rememberedTabs && rememberedNav) rememberedTabs.selectedViewController = rememberedNav;
+                if (rememberedNav) {
+                    [rememberedNav popToViewController:rememberedMenu animated:NO];
+                    PBRHealthBeacon(@"leave-return-trading-menu");
+                    return;
+                }
+            }
+
             Class menuClass = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
             UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
             __block UIViewController *menu = nil;
@@ -991,7 +1007,11 @@ static void PBRScheduleHookInstallation(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         PBRInstallRevivalHooks();
         BOOL criticalHooksReady = PBRMenuTapHooked && PBRWishlistCardsHooked && PBROnlineLoadingCancelHooked &&
-                                  PBRFindMatchHooked && PBRCancelHooked;
+                                  PBRFindMatchHooked && PBRCancelHooked &&
+                                  PBRMessageDoneHooked && PBRWishlistDoneHooked &&
+                                  PBRTradeReadyHooked && PBRTradeAcceptHooked &&
+                                  PBRTradeMakeChangesHooked && PBRTradeCancelAcceptHooked &&
+                                  PBRTradeLeaveHooked;
         if (!criticalHooksReady) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{

@@ -7,3 +7,4 @@ UIViewController * _Nullable PBRInstantiateOriginalTrading(void);
 
 BOOL PBRStartOriginalNativeMatch(NSString * _Nonnull peerAlias);
 UIViewController * _Nullable PBRCurrentOriginalTrading(void);
+UIViewController * _Nullable PBRPresentOriginalTradingFallback(void);

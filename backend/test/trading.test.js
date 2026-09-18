@@ -286,3 +286,68 @@ test('malformed original positions cannot alter an offer or inventory', () => {
     assert.equal(f.state.accounts[accountKey('alice')].cards.cardA, 2);
   }
 });
+
+
+test('explicit inventory relink is versioned, isolated and blocked while busy', () => {
+  const f = fixture();
+  const key = accountKey('alice');
+  f.state.accounts[key].inventoryReady = true;
+  f.state.accounts[key].inventoryVersion = 4;
+  f.state.accounts[key].preserveFirstCopy = true;
+  const beforeBob = structuredClone(f.state.accounts[accountKey('bob')]);
+
+  let result = f.call('alice', {
+    action: 'replaceInventory',
+    expectedInventoryVersion: 3,
+    preserveFirstCopy: true,
+    inventory: { coins: 777, cards: { cardZ: 2 } }
+  });
+  assert.equal(result.body.error, 'STALE_INVENTORY_VERSION');
+  assert.equal(f.state.accounts[key].coins, 100);
+
+  result = f.call('alice', {
+    action: 'replaceInventory',
+    expectedInventoryVersion: 4,
+    preserveFirstCopy: true,
+    inventory: { coins: 777, cards: { cardZ: 2 } }
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.inventoryVersion, 5);
+  assert.equal(result.body.inventoryOrigin, 'device-authoritative-relink');
+  assert.equal(result.body.preserveFirstCopy, true);
+  assert.deepEqual(result.body.inventory, { coins: 777, cards: { cardZ: 2 } });
+  assert.deepEqual(f.state.accounts[accountKey('bob')], beforeBob);
+
+  f.advance(3001);
+  assert.equal(f.call('alice', { action: 'queue' }).status, 200);
+  result = f.call('alice', {
+    action: 'replaceInventory',
+    expectedInventoryVersion: 5,
+    preserveFirstCopy: true,
+    inventory: { coins: 888, cards: { cardZ: 2 } }
+  });
+  assert.equal(result.body.error, 'ACCOUNT_BUSY');
+});
+
+test('inventory relink validates collection and cannot disable first-copy protection', () => {
+  const f = fixture();
+  const key = accountKey('alice');
+  f.state.accounts[key].inventoryReady = true;
+  f.state.accounts[key].inventoryVersion = 1;
+  f.state.accounts[key].preserveFirstCopy = true;
+
+  for (const request of [
+    { inventory: { coins: -1, cards: {} }, preserveFirstCopy: true },
+    { inventory: { coins: 1, cards: { bad: 0 } }, preserveFirstCopy: true },
+    { inventory: { coins: 1, cards: {} }, preserveFirstCopy: false }
+  ]) {
+    const result = f.call('alice', {
+      action: 'replaceInventory',
+      expectedInventoryVersion: 1,
+      ...request
+    });
+    assert.notEqual(result.status, 200);
+    assert.equal(f.state.accounts[key].inventoryVersion, 1);
+    assert.equal(f.state.accounts[key].coins, 100);
+  }
+});

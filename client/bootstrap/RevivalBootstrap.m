@@ -929,24 +929,105 @@ UIViewController *PBRPresentOriginalTradingFallback(void) {
     return controller;
 }
 
+static void PBRAppendWishlistCandidate(id item,
+                                      NSMutableArray<NSString *> *result,
+                                      NSMutableSet<NSString *> *seen,
+                                      NSUInteger depth) {
+    if (!item || result.count >= 50 || depth > 4) return;
+
+    if ([item isKindOfClass:NSString.class] || [item isKindOfClass:NSNumber.class]) {
+        NSString *identifier = [item isKindOfClass:NSString.class] ? item : [item stringValue];
+        if (identifier.length && ![seen containsObject:identifier] && PBRPlayerForIdentifier(identifier)) {
+            [seen addObject:identifier];
+            [result addObject:identifier];
+        }
+        return;
+    }
+
+    if ([item isKindOfClass:NSArray.class] || [item isKindOfClass:NSSet.class]) {
+        for (id value in item) {
+            PBRAppendWishlistCandidate(value, result, seen, depth + 1);
+            if (result.count >= 50) break;
+        }
+        return;
+    }
+
+    if ([item isKindOfClass:NSDictionary.class]) {
+        for (id value in [(NSDictionary *)item allValues]) {
+            PBRAppendWishlistCandidate(value, result, seen, depth + 1);
+            if (result.count >= 50) break;
+        }
+        return;
+    }
+
+    NSString *identifier = PBRPlayerIdentifier(item);
+    if (identifier.length && ![seen containsObject:identifier] && PBRPlayerForIdentifier(identifier)) {
+        [seen addObject:identifier];
+        [result addObject:identifier];
+        return;
+    }
+
+    for (NSString *key in @[@"player", @"playerObject", @"playerModel", @"cardPlayer",
+                            @"card", @"object", @"data", @"value", @"wishlistPlayers",
+                            @"wishlistCards", @"wishlist", @"players"]) {
+        @try {
+            id nested = [item valueForKey:key];
+            if (nested && nested != item) {
+                PBRAppendWishlistCandidate(nested, result, seen, depth + 1);
+                if (result.count >= 50) return;
+            }
+        } @catch (NSException *ignored) {}
+    }
+}
+
+static void PBRCollectWishlistIvars(id owner,
+                                    NSMutableArray<NSString *> *result,
+                                    NSMutableSet<NSString *> *seen) {
+    if (!owner || result.count >= 50) return;
+    for (Class cls = [owner class]; cls && cls != NSObject.class; cls = class_getSuperclass(cls)) {
+        unsigned int count = 0;
+        Ivar *ivars = class_copyIvarList(cls, &count);
+        for (unsigned int i = 0; i < count && result.count < 50; i++) {
+            Ivar ivar = ivars[i];
+            const char *name = ivar_getName(ivar);
+            const char *type = ivar_getTypeEncoding(ivar);
+            if (!name || !type || type[0] != '@') continue;
+            NSString *ivarName = [NSString stringWithUTF8String:name].lowercaseString;
+            if (![ivarName containsString:@"wish"]) continue;
+            @try {
+                id value = object_getIvar(owner, ivar);
+                PBRAppendWishlistCandidate(value, result, seen, 0);
+            } @catch (NSException *ignored) {}
+        }
+        if (ivars) free(ivars);
+    }
+}
+
 NSArray<NSString *> *PBRCurrentWishlistIdentifiers(void) {
     @try {
-        NSMutableArray *candidates = [NSMutableArray array];
+        NSMutableArray<NSString *> *result = [NSMutableArray array];
+        NSMutableSet<NSString *> *seen = [NSMutableSet set];
 
         UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
         UIViewController *root = window.rootViewController;
         NSMutableArray<UIViewController *> *queue = [NSMutableArray array];
+        NSMutableSet<NSValue *> *visitedControllers = [NSMutableSet set];
         if (root) [queue addObject:root];
-        Class menuClass = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
-        while (queue.count) {
+
+        while (queue.count && result.count < 50) {
             UIViewController *controller = queue.firstObject;
             [queue removeObjectAtIndex:0];
-            if (menuClass && [controller isKindOfClass:menuClass]) {
+            NSValue *identity = [NSValue valueWithNonretainedObject:controller];
+            if ([visitedControllers containsObject:identity]) continue;
+            [visitedControllers addObject:identity];
+
+            PBRCollectWishlistIvars(controller, result, seen);
+            for (NSString *key in @[@"wishlistCards", @"wishlistPlayers", @"wishlist"]) {
                 @try {
-                    id cards = [controller valueForKey:@"wishlistCards"];
-                    if ([cards isKindOfClass:NSArray.class]) [candidates addObjectsFromArray:cards];
+                    PBRAppendWishlistCandidate([controller valueForKey:key], result, seen, 0);
                 } @catch (NSException *ignored) {}
             }
+
             if (controller.presentedViewController) [queue addObject:controller.presentedViewController];
             [queue addObjectsFromArray:controller.childViewControllers ?: @[]];
             if ([controller isKindOfClass:UINavigationController.class]) {
@@ -956,51 +1037,34 @@ NSArray<NSString *> *PBRCurrentWishlistIdentifiers(void) {
             }
         }
 
-        // DialogTradingNeeds owns a populated wishlistPlayers array. Search the
-        // attached view hierarchy as a secondary source when that dialog exists.
-        Class needsClass = NSClassFromString(@"_TtC13PACYBITSFUT2018DialogTradingNeeds");
         NSMutableArray<UIView *> *views = [NSMutableArray array];
+        NSMutableSet<NSValue *> *visitedViews = [NSMutableSet set];
         if (window) [views addObject:window];
-        while (views.count) {
+        while (views.count && result.count < 50) {
             UIView *view = views.firstObject;
             [views removeObjectAtIndex:0];
-            if (needsClass && [view isKindOfClass:needsClass]) {
+            NSValue *identity = [NSValue valueWithNonretainedObject:view];
+            if ([visitedViews containsObject:identity]) continue;
+            [visitedViews addObject:identity];
+
+            PBRCollectWishlistIvars(view, result, seen);
+            for (NSString *key in @[@"wishlistPlayers", @"wishlistCards", @"wishlist"]) {
                 @try {
-                    Ivar ivar = class_getInstanceVariable(needsClass, "wishlistPlayers");
-                    id players = ivar ? object_getIvar(view, ivar) : nil;
-                    if ([players isKindOfClass:NSArray.class]) [candidates addObjectsFromArray:players];
+                    PBRAppendWishlistCandidate([view valueForKey:key], result, seen, 0);
                 } @catch (NSException *ignored) {}
             }
             [views addObjectsFromArray:view.subviews ?: @[]];
         }
 
-        NSMutableArray<NSString *> *result = [NSMutableArray array];
-        NSMutableSet<NSString *> *seen = [NSMutableSet set];
-        for (id item in candidates) {
-            NSString *identifier = nil;
-            if ([item isKindOfClass:NSString.class]) identifier = item;
-            else if ([item isKindOfClass:NSNumber.class]) identifier = [item stringValue];
-            else {
-                identifier = PBRPlayerIdentifier(item);
-                if (!identifier.length) {
-                    for (NSString *key in @[@"player", @"card", @"object", @"data"]) {
-                        @try {
-                            id nested = [item valueForKey:key];
-                            if (!nested || nested == item) continue;
-                            if ([nested isKindOfClass:NSString.class]) identifier = nested;
-                            else if ([nested isKindOfClass:NSNumber.class]) identifier = [nested stringValue];
-                            else identifier = PBRPlayerIdentifier(nested);
-                            if (identifier.length) break;
-                        } @catch (NSException *ignored) {}
-                    }
-                }
-            }
-            if (identifier.length && ![seen containsObject:identifier] && PBRPlayerForIdentifier(identifier)) {
-                [seen addObject:identifier];
-                [result addObject:identifier];
-                if (result.count >= 50) break;
-            }
-        }
+        // PACYBITS keeps several trading fields on its long-lived GameCenter helper.
+        // Inspect only ivars whose names contain "wish"; this avoids guessing offsets
+        // while still surviving Swift property-name changes between UI states.
+        @try {
+            intptr_t slide = _dyld_get_image_vmaddr_slide(0);
+            void *raw = *(void **)(uintptr_t)(0x1012be350ULL + slide);
+            if (raw) PBRCollectWishlistIvars((__bridge id)raw, result, seen);
+        } @catch (NSException *ignored) {}
+
         if (result.count) PBRHealthBeacon(@"fallback-wishlist");
         return result;
     } @catch (NSException *exception) {

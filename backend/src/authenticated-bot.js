@@ -36,6 +36,7 @@ export class AuthenticatedRandomBot {
     this.running = false;
     this.introRoom = null;
     this.offeredRoom = null;
+    this.initialized = false;
   }
 
   async start() {
@@ -155,6 +156,7 @@ export class AuthenticatedRandomBot {
   }
 
   async ensureRegistered() {
+    if (this.initialized) return;
     const registered = await this.call({ action: 'register' });
     if (registered.inventoryReady === false) {
       await this.call({
@@ -164,6 +166,8 @@ export class AuthenticatedRandomBot {
       });
     }
     await this.markBotAccount();
+    this.initialized = true;
+    this.log(JSON.stringify({ event: 'authBot', status: 'authenticated' }));
   }
 
   async tick() {

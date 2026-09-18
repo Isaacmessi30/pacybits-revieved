@@ -363,11 +363,12 @@ final class OriginalTradingCoordinator {
     private func submitSignal(type: String, value: Any?) async {
         guard let api, let roomID = peerState?.roomID, !closed else { return }
         do {
-            if isBotRoom && type == "tradingDidSetWishlist" {
+            if type == "tradingDidSetWishlist" {
                 let ids = Self.wishlistCardIDs(from: value)
                 let wishlistResponse = try await api.setWishlist(cardIDs: ids)
                 lastWishlistSignature = ids.joined(separator: "|")
                 if wishlistResponse.room != nil { try process(wishlistResponse) }
+                return
             }
 
             let box: [String:Any] = value == nil ? ["nil": true] : ["value": value!]
@@ -396,7 +397,7 @@ final class OriginalTradingCoordinator {
         }
 
         func walk(_ item: Any?) {
-            guard let item, ordered.count < 3 else { return }
+            guard let item, ordered.count < 50 else { return }
 
             if let string = item as? String {
                 add(string)
@@ -412,10 +413,10 @@ final class OriginalTradingCoordinator {
             }
             if let dictionary = item as? [String:Any] {
                 let preferred = ["id", "playerId", "playerID", "cardId", "cardID"]
-                for key in preferred where ordered.count < 3 {
+                for key in preferred where ordered.count < 50 {
                     if let value = dictionary[key] { walk(value) }
                 }
-                for (key, value) in dictionary where !preferred.contains(key) && ordered.count < 3 {
+                for (key, value) in dictionary where !preferred.contains(key) && ordered.count < 50 {
                     walk(value)
                 }
                 return

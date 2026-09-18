@@ -105,6 +105,13 @@ final class OriginalTradingCoordinator {
         active?.cleanup(cancelServer: true)
     }
 
+    static func submitNativeSignal(type: String, value: Any?) {
+        guard let current = active, !current.closed else { return }
+        Task { @MainActor in
+            await current.submitSignal(type: type, value: value)
+        }
+    }
+
     static func submitNativeFallback(_ name: String) {
         guard let current = active, !current.closed else { return }
         let action: OriginalTradeAction
@@ -300,17 +307,13 @@ final class OriginalTradingCoordinator {
         guard PBRStartOriginalNativeMatch("PACYBITS Player") else {
             throw RevivalFailure("PACYBITS could not start its original match-found transition.")
         }
-        let nativeSearchOwnsTransition = PBRNativeFindCompletionWasUsed()
-
         // Only the legacy synthetic test partner needs a locally injected intro.
         // A real authenticated bot/peer sends tradingIntro through the backend,
         // which lets PACYBITS run its normal peer-introduction + wishlist path.
         if room.testPartner == true {
             try OriginalTradingScreen.primeTradingIntro(peerClubName: "PACYBITS Player")
         }
-        if !nativeSearchOwnsTransition {
-            try OriginalTradingScreen.openOriginalTradingRoute()
-        }
+        try OriginalTradingScreen.openOriginalTradingRoute()
 
         try process(initial)
         try attachNativeScreenIfReady()

@@ -494,20 +494,15 @@ final class OriginalTradingCoordinator {
             do {
                 try await Task.sleep(nanoseconds: 500_000_000)
                 if let screen {
-                    let attached = screen.controller.presentingViewController != nil ||
-                                   screen.controller.navigationController != nil ||
-                                   screen.controller.view.window != nil
-                    if attached {
+                    if screen.isActive {
                         detachedScreenChecks = 0
                     } else {
+                        // PACYBITS intentionally leaves TradingViewController
+                        // while the user is in Duplicates/card selection. Keep
+                        // the authenticated room alive and buffer peer events;
+                        // they are rendered when the original trade screen
+                        // becomes active again.
                         detachedScreenChecks += 1
-                        // UIKit presentation can span a run-loop turn. Do not
-                        // destroy a successfully paired room while the original
-                        // PACYBITS controller is still being attached.
-                        if detachedScreenChecks >= 6 {
-                            cleanup(cancelServer: true)
-                            return
-                        }
                     }
                 }
                 guard let session else { return }

@@ -458,3 +458,24 @@ test('authenticated bot rooms expose botPartner and persist peer wishlist state'
   assert.equal(wish.status, 200);
   assert.deepEqual(wish.body.room.wishlists[accountKey('alice')], ['wishA', 'wishB', 'wishC']);
 });
+
+
+test('account wishlist is carried into normal matchmaking rooms', () => {
+  const f = fixture();
+  f.state.accounts[accountKey('alice')].inventoryReady = true;
+  f.state.accounts[accountKey('bob')].inventoryReady = true;
+
+  const saved = f.call('alice', {
+    action: 'setWishlist',
+    cardIds: ['wishA', 'wishB', 'wishC', 'wishD']
+  });
+  assert.equal(saved.status, 200);
+
+  assert.equal(f.call('alice', { action: 'queue', scope: 'g:0:a:0' }).body.queued, true);
+  f.advance(3001);
+  const matched = f.call('bob', { action: 'queue', scope: 'g:0:a:0' });
+  assert.equal(matched.status, 200);
+  const humanKey = accountKey('alice');
+  assert.deepEqual(matched.body.room.wishlists[humanKey],
+    ['wishA', 'wishB', 'wishC', 'wishD']);
+});

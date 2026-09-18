@@ -5,7 +5,7 @@ const MAX_COINS = 1_000_000_000;
 const MAX_COPIES = 1_000_000;
 const SAFE_ID = /^[a-zA-Z0-9_-]{1,128}$/;
 const SAFE_SCOPE = /^[a-zA-Z0-9:_-]{1,128}$/;
-const ACTIONS = new Set(['register', 'importLegacyInventory', 'replaceInventory', 'status', 'invite', 'join', 'queue', 'leaveQueue', 'offer', 'ready', 'confirm', 'handshake', 'signal', 'cancel']);
+const ACTIONS = new Set(['register', 'importLegacyInventory', 'replaceInventory', 'status', 'invite', 'join', 'queue', 'leaveQueue', 'offer', 'ready', 'confirm', 'handshake', 'signal', 'cancel', 'botWishlist', 'botPeerHandshake']);
 const SIGNAL_TYPES = new Set(['new_friend_info', 'tradingIntro',
   'tradingDidSetMessage', 'tradingDidSetFilters', 'tradingDidSetWishlist',
   'emote', 'tradingStartAnimatingOutline', 'tradingStopAnimatingOutline',
@@ -86,6 +86,8 @@ function view(room, key) {
     offers: room.offers, ready: room.ready, confirmed: room.confirmed, handshakes: room.handshakes ?? {},
     signals: room.signals ?? {},
     ...(room.testPartnerUid ? { testPartner: true } : {}),
+    ...(room.botPartnerKey ? { botPartner: true } : {}),
+    ...(room.wishlists ? { wishlists: room.wishlists } : {}),
     ...(room.closedAt !== undefined ? { closedAt: room.closedAt } : {})
   };
 }
@@ -267,6 +269,8 @@ function execute(state, key, input, now, id) {
           if (peerAccount?.testPartnerUid) room.testPartnerUid = peerAccount.testPartnerUid;
           else if (currentAccount?.testPartnerUid) room.testPartnerUid = currentAccount.testPartnerUid;
         }
+        if (peerAccount?.authenticatedBot === true) room.botPartnerKey = peer;
+        else if (currentAccount?.authenticatedBot === true) room.botPartnerKey = key;
         return { room: view(room, key), queued: false };
       }
       const old = state.queue[key];
@@ -297,6 +301,31 @@ function execute(state, key, input, now, id) {
       list.push({ seq: room.signalSeq, type: input.signalType, payload: input.signalPayload });
       room.signals[key] = list.slice(-32);
       return { room: view(room, key) };
+    }
+    case 'botWishlist': {
+      const room = roomFor(state, key, input.roomId, now, false);
+      requireValue(room.botPartnerKey && room.botPartnerKey !== key, 'BOT_ROOM_REQUIRED', 409);
+      requireValue(Array.isArray(input.cardIds) && input.cardIds.length <= 3, 'INVALID_BOT_WISHLIST');
+      const ids = [];
+      const seen = new Set();
+      for (const card of input.cardIds) {
+        requireValue(typeof card === 'string' && SAFE_ID.test(card), 'INVALID_BOT_WISHLIST');
+        if (!seen.has(card)) { seen.add(card); ids.push(card); }
+      }
+      room.wishlists ??= {};
+      room.wishlists[key] = ids;
+      return { room: view(room, key) };
+    }
+    case 'botPeerHandshake': {
+      const room = roomFor(state, key, input.roomId, now, true);
+      requireValue(room.botPartnerKey && room.botPartnerKey !== key, 'BOT_ROOM_REQUIRED', 409);
+      requireValue(room.status === 'completed', 'TRADE_NOT_COMPLETED', 409);
+      requireValue(typeof input.payload === 'string' && input.payload.length > 0 && input.payload.length <= 12000
+        && /^[A-Za-z0-9+/=]+$/.test(input.payload), 'INVALID_HANDSHAKE');
+      room.handshakes ??= {};
+      room.handshakes[room.botPartnerKey] = input.payload;
+      return { room: view(room, key), inventory: { coins: a.coins, cards: a.cards },
+        inventoryVersion: a.inventoryVersion ?? 0, preserveFirstCopy: a.preserveFirstCopy === true };
     }
     case 'cancel': {
       const room = roomFor(state, key, input.roomId, now, true);
@@ -360,7 +389,8 @@ export function transition(current, uid, input, now, newRoomId) {
       queue: ['action', 'scope', 'targetLegacyId'], leaveQueue: ['action'], cancel: ['action', 'roomId'],
       offer: ['action', 'roomId', 'revision', 'offer'], ready: ['action', 'roomId', 'revision'],
       confirm: ['action', 'roomId', 'revision'], handshake: ['action', 'roomId', 'payload'],
-      signal: ['action', 'roomId', 'signalType', 'signalPayload']
+      signal: ['action', 'roomId', 'signalType', 'signalPayload'],
+      botWishlist: ['action', 'roomId', 'cardIds'], botPeerHandshake: ['action', 'roomId', 'payload']
     };
     requireValue(Object.keys(input).every(k => fields[input.action].includes(k)), 'UNEXPECTED_FIELD');
     expire(state, key, now);

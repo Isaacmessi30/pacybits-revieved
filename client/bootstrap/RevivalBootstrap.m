@@ -118,6 +118,7 @@ static char PBRAboutControllerKey;
 
 NSString *PBRPlayerIdentifier(id player);
 id PBRPlayerForIdentifier(NSString *identifier);
+static void PBRHealthBeacon(NSString *probe);
 
 static void PBRCaptureWishlistObject(id item,
                                      NSMutableArray<NSString *> *result,

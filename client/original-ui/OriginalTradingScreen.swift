@@ -13,7 +13,9 @@ final class OriginalTradingScreen {
     private var restored = false
     private let receive: @convention(thin) (String, [String:Any]) -> Void
 
-    init(peerClubName: String, badgeName: String = "pacybits_fc_logo_large.png") throws {
+    init(peerClubName: String, badgeName: String = "pacybits_fc_logo_large.png",
+         existingController: UIViewController? = nil,
+         updateProfile: Bool = true) throws {
         guard let header = _dyld_get_image_header(0), header.pointee.magic == MH_MAGIC_64 else {
             throw RevivalFailure("Unsupported game executable.")
         }
@@ -52,12 +54,48 @@ final class OriginalTradingScreen {
         }
         profile = UnsafeMutableRawPointer(mutating: pointer).advanced(by: field).assumingMemoryBound(to: [String:Any].self)
         previousProfile = profile.pointee
-        guard let native = PBRInstantiateOriginalTrading() else {
-            throw RevivalFailure("The original Trading storyboard could not be loaded.")
+        if let existingController {
+            controller = existingController
+        } else {
+            guard let native = PBRInstantiateOriginalTrading() else {
+                throw RevivalFailure("The original Trading storyboard could not be loaded.")
+            }
+            controller = native
         }
-        controller = native
         receive = unsafeBitCast(entry, to: (@convention(thin) (String, [String:Any]) -> Void).self)
-        profile.pointee = ["clubName": String(peerClubName.prefix(40)), "badgeName": badgeName]
+        if updateProfile {
+            profile.pointee = ["clubName": String(peerClubName.prefix(40)), "badgeName": badgeName]
+        }
+    }
+
+    static func attachCurrent(peerClubName: String,
+                              badgeName: String = "pacybits_fc_logo_large.png") throws -> OriginalTradingScreen? {
+        guard let controller = PBRCurrentOriginalTrading() else { return nil }
+        return try OriginalTradingScreen(peerClubName: peerClubName,
+                                         badgeName: badgeName,
+                                         existingController: controller,
+                                         updateProfile: false)
+    }
+
+    static func deliverPretradeSignal(_ signal: TradeSignal) throws {
+        guard ["new_friend_info", "tradingIntro"].contains(signal.type),
+              signal.payload.count <= 12_000,
+              let data = Data(base64Encoded: signal.payload),
+              data.count <= 8_192,
+              let box = try PropertyListSerialization.propertyList(
+                from: data, options: [], format: nil) as? [String:Any] else {
+            throw RevivalFailure("Invalid PACYBITS pre-trade event.")
+        }
+        let slide = _dyld_get_image_vmaddr_slide(0)
+        guard let entry = UnsafeRawPointer(bitPattern: 0x1006e48b4 + slide),
+              Array(UnsafeRawBufferPointer(start: entry, count: 16)) ==
+                [0xff,0x43,0x04,0xd1,0xfc,0x6f,0x0b,0xa9,0xfa,0x67,0x0c,0xa9,0xf8,0x5f,0x0d,0xa9] else {
+            throw RevivalFailure("Unsupported original trading receiver.")
+        }
+        let receive = unsafeBitCast(
+            entry, to: (@convention(thin) (String, [String:Any]) -> Void).self)
+        let value: Any = box["nil"] as? Bool == true ? "" : (box["value"] ?? "")
+        receive(signal.type, ["value": value])
     }
 
     func restoreProfile() {

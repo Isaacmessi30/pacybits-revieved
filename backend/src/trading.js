@@ -6,7 +6,9 @@ const MAX_COPIES = 1_000_000;
 const SAFE_ID = /^[a-zA-Z0-9_-]{1,128}$/;
 const SAFE_SCOPE = /^[a-zA-Z0-9:_-]{1,128}$/;
 const ACTIONS = new Set(['register', 'importLegacyInventory', 'replaceInventory', 'status', 'invite', 'join', 'queue', 'leaveQueue', 'offer', 'ready', 'confirm', 'handshake', 'signal', 'cancel']);
-const SIGNAL_TYPES = new Set(['emote', 'tradingStartAnimatingOutline', 'tradingStopAnimatingOutline',
+const SIGNAL_TYPES = new Set(['new_friend_info', 'tradingIntro',
+  'tradingDidSetMessage', 'tradingDidSetFilters', 'tradingDidSetWishlist',
+  'emote', 'tradingStartAnimatingOutline', 'tradingStopAnimatingOutline',
   'tradingStartAnimatingWishlist', 'tradingStopAnimatingWishlist', 'tradingThumbsOutline']);
 
 export class TradeError extends Error {

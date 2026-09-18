@@ -4,3 +4,6 @@ NSString * _Nullable PBRCardLabel(NSString * _Nonnull identifier);
 NSString * _Nullable PBRPlayerIdentifier(id _Nonnull player);
 id _Nullable PBRPlayerForIdentifier(NSString * _Nonnull identifier);
 UIViewController * _Nullable PBRInstantiateOriginalTrading(void);
+
+BOOL PBRStartOriginalNativeMatch(NSString * _Nonnull peerAlias);
+UIViewController * _Nullable PBRCurrentOriginalTrading(void);

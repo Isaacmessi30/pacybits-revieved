@@ -67,6 +67,7 @@
 - (void)codeSearchTapped:(UITapGestureRecognizer *)gesture;
 - (void)channelsSearchTapped:(UITapGestureRecognizer *)gesture;
 - (void)friendsSearchTapped:(UITapGestureRecognizer *)gesture;
+- (void)tradingMessageFallbackTapped:(UITapGestureRecognizer *)gesture;
 - (void)aboutSignInTapped:(UIButton *)sender;
 - (void)aboutSignOutTapped:(UIButton *)sender;
 @end
@@ -94,8 +95,11 @@ static IMP PBROriginalTradeLeaveTap = NULL;
 static IMP PBROriginalWishlistCardsSetter = NULL;
 static IMP PBROriginalMessageDoneTap = NULL;
 static IMP PBROriginalWishlistDoneTap = NULL;
+static IMP PBROriginalTradingChatTap = NULL;
 static NSMutableArray<NSString *> *PBRCachedWishlistIdentifiers = nil;
-static __weak UIViewController *PBRLastTradingMenuController = nil;
+static UIViewController *PBRLastTradingMenuController = nil;
+static __weak UINavigationController *PBRLastTradingNavigationController = nil;
+static __weak UITabBarController *PBRLastTradingTabController = nil;
 
 static BOOL PBRMenuTapHooked = NO;
 static BOOL PBRCodeViewHooked = NO;
@@ -114,6 +118,7 @@ static BOOL PBRTradeLeaveHooked = NO;
 static BOOL PBRWishlistCardsHooked = NO;
 static BOOL PBRMessageDoneHooked = NO;
 static BOOL PBRWishlistDoneHooked = NO;
+static BOOL PBRTradingChatHooked = NO;
 
 static char PBRButtonWiredKey;
 static char PBRGestureControllerKey;
@@ -256,6 +261,54 @@ static void PBRTradingWishlistDoneTap(id receiver, SEL selector, id gesture) {
     }
 }
 
+
+static char PBRMessageDialogAssociationKey;
+static char PBRMessageButtonFallbackInstalledKey;
+
+static UIView *PBRFindSubviewOfClass(UIView *root, Class expected) {
+    if (!root || !expected) return nil;
+    if ([root isKindOfClass:expected]) return root;
+    for (UIView *child in root.subviews) {
+        UIView *found = PBRFindSubviewOfClass(child, expected);
+        if (found) return found;
+    }
+    return nil;
+}
+
+static void PBRInstallMessageButtonFallback(void) {
+    UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
+    Class dialogClass = NSClassFromString(@"_TtC13PACYBITSFUT2020DialogTradingMessage");
+    id dialog = PBRFindSubviewOfClass(window, dialogClass);
+    if (!dialog) return;
+
+    id button = nil;
+    @try { button = [dialog valueForKey:@"button"]; } @catch (NSException *ignored) {}
+    if (![button isKindOfClass:UIView.class]) return;
+    if ([objc_getAssociatedObject(button, &PBRMessageButtonFallbackInstalledKey) boolValue]) return;
+
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc]
+        initWithTarget:[PBRRevivalBootstrap shared]
+        action:@selector(tradingMessageFallbackTapped:)];
+    tap.cancelsTouchesInView = NO;
+    objc_setAssociatedObject(tap, &PBRMessageDialogAssociationKey,
+                             [NSValue valueWithNonretainedObject:dialog],
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [button addGestureRecognizer:tap];
+    objc_setAssociatedObject(button, &PBRMessageButtonFallbackInstalledKey,
+                             @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    PBRHealthBeacon(@"message-fallback-installed");
+}
+
+static void PBRTradingChatTap(id receiver, SEL selector, id gesture) {
+    if (PBROriginalTradingChatTap) {
+        ((void (*)(id, SEL, id))PBROriginalTradingChatTap)(receiver, selector, gesture);
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ PBRInstallMessageButtonFallback(); });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.40 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ PBRInstallMessageButtonFallback(); });
+}
+
 static BOOL PBRTradingIsArmed(void) {
     return PBRTradingArmedUntil > CACurrentMediaTime();
 }
@@ -370,6 +423,8 @@ static NSString *PBRTradingModeForGesture(id receiver, UIGestureRecognizer *gest
 static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer *gesture) {
     if ([receiver isKindOfClass:UIViewController.class]) {
         PBRLastTradingMenuController = (UIViewController *)receiver;
+        PBRLastTradingNavigationController = ((UIViewController *)receiver).navigationController;
+        PBRLastTradingTabController = ((UIViewController *)receiver).tabBarController;
     }
     NSString *mode = PBRTradingModeForGesture(receiver, gesture);
     if (!mode.length) {
@@ -434,6 +489,21 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
             receiver, NSSelectorFromString(@"buttonTapHandlerWithGesture:"), gesture);
     });
 }
+- (void)tradingMessageFallbackTapped:(UITapGestureRecognizer *)gesture {
+    id dialog = [objc_getAssociatedObject(gesture, &PBRMessageDialogAssociationKey) nonretainedObjectValue];
+    if (!dialog || !PBRShouldInterceptTrading()) return;
+    NSString *message = nil;
+    @try {
+        id field = [dialog valueForKey:@"textField"];
+        if ([field respondsToSelector:@selector(text)]) message = [field text];
+    } @catch (NSException *ignored) {}
+    NSString *trimmed = [message stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (trimmed.length) {
+        PBRHealthBeacon(@"fallback-message-gesture");
+        PBRSubmitNativeSignal(@"tradingDidSetMessage", trimmed);
+    }
+}
+
 - (void)codeSearchTapped:(UITapGestureRecognizer *)gesture {
     id receiver = [objc_getAssociatedObject(gesture, &PBRGestureControllerKey) nonretainedObjectValue];
     if (!receiver || !PBROriginalCodeSearch) return;
@@ -866,8 +936,8 @@ static void PBRTradingLeaveTap(id receiver, SEL selector, id gesture) {
         dispatch_async(dispatch_get_main_queue(), ^{
             UIViewController *rememberedMenu = PBRLastTradingMenuController;
             if (rememberedMenu) {
-                UINavigationController *rememberedNav = rememberedMenu.navigationController;
-                UITabBarController *rememberedTabs = rememberedMenu.tabBarController;
+                UINavigationController *rememberedNav = PBRLastTradingNavigationController ?: rememberedMenu.navigationController;
+                UITabBarController *rememberedTabs = PBRLastTradingTabController ?: rememberedMenu.tabBarController;
                 if (rememberedTabs && rememberedNav) rememberedTabs.selectedViewController = rememberedNav;
                 if (rememberedNav) {
                     [rememberedNav popToViewController:rememberedMenu animated:NO];
@@ -962,6 +1032,10 @@ static void PBRInstallRevivalHooks(void) {
     PBRInstallMethodHookOnce(friends, NSSelectorFromString(@"didMoveToWindow"),
                              (IMP)PBRFriendsDidMoveToWindow, &PBROriginalFriendsDidMoveToWindow, &PBRFriendsViewHooked);
 
+    Class tradingVC = NSClassFromString(@"_TtC13PACYBITSFUT2021TradingViewController");
+    PBRInstallMethodHookOnce(tradingVC, NSSelectorFromString(@"chatTapHandler:"),
+                             (IMP)PBRTradingChatTap, &PBROriginalTradingChatTap, &PBRTradingChatHooked);
+
     Class messageDialog = NSClassFromString(@"_TtC13PACYBITSFUT2020DialogTradingMessage");
     PBRInstallMethodHookOnce(messageDialog, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
                              (IMP)PBRTradingMessageDoneTap, &PBROriginalMessageDoneTap, &PBRMessageDoneHooked);
@@ -1011,7 +1085,7 @@ static void PBRScheduleHookInstallation(void) {
                                   PBRMessageDoneHooked && PBRWishlistDoneHooked &&
                                   PBRTradeReadyHooked && PBRTradeAcceptHooked &&
                                   PBRTradeMakeChangesHooked && PBRTradeCancelAcceptHooked &&
-                                  PBRTradeLeaveHooked;
+                                  PBRTradeLeaveHooked && PBRTradingChatHooked;
         if (!criticalHooksReady) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{

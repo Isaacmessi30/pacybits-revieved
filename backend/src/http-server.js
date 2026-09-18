@@ -14,7 +14,8 @@ export function createTradingHTTPServer(trade) {
         'native-start', 'native-no-helper', 'native-helper-type-failed',
         'native-no-selector', 'native-callback', 'native-return', 'native-exception',
         'screen-found', 'screen-missing',
-        'sender-ready', 'sender-accept', 'sender-wishlist', 'sender-picked', 'sender-other'
+        'sender-ready', 'sender-accept', 'sender-wishlist', 'sender-picked', 'sender-other',
+        'trade-hooks-ready'
       ];
       const probe = safeProbes.includes(rawProbe) ? rawProbe : undefined;
       console.log(JSON.stringify({ event: 'http', method: req.method, path, status, ...(probe ? { probe } : {}) }));

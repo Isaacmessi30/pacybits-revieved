@@ -29,7 +29,8 @@ if (!emulator) {
 }
 const app = initializeApp({ projectId, databaseURL, ...(credential ? { credential } : {}) });
 const trade = createTradingService({ auth: getAuth(app), database: getDatabase(app),
-  testPartnerEnabled: process.env.REVIVAL_TEST_PARTNER_ENABLED === 'true' });
+  testPartnerEnabled: process.env.REVIVAL_TEST_PARTNER_ENABLED === 'true',
+  randomBotEnabled: process.env.REVIVAL_RANDOM_BOT_ENABLED === 'true' });
 const server = createTradingHTTPServer(trade);
 const port = Number(process.env.PORT ?? 10000);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT');

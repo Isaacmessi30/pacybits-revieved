@@ -5,7 +5,7 @@ import Foundation
 /// runs the game's handshake or writes a collection.
 @MainActor
 final class OriginalTradeSession {
-    private enum Operation { case action(OriginalTradeAction), refresh, cancel }
+    private enum Operation { case action(OriginalTradeAction), replaceOffer(TradeOffer), refresh, cancel }
     private let api: TradingClient
     private let roomID: String
     private let selfKey: String
@@ -30,6 +30,9 @@ final class OriginalTradeSession {
     func submit(_ action: OriginalTradeAction) async throws -> TradingResponse {
         try await enqueue(.action(action))
     }
+    func replaceOffer(_ offer: TradeOffer) async throws -> TradingResponse {
+        try await enqueue(.replaceOffer(offer))
+    }
     func refresh() async throws -> TradingResponse { try await enqueue(.refresh) }
     func cancel() async throws -> TradingResponse { try await enqueue(.cancel) }
 
@@ -52,6 +55,15 @@ final class OriginalTradeSession {
                 result = try await api.status(roomID: roomID)
             case .cancel:
                 result = try await api.cancel(roomID: roomID)
+            case .replaceOffer(let offer):
+                guard !needsRefresh, room.status == "open",
+                      let current = room.offers[selfKey] else {
+                    throw TradingClientError.invalidResponse
+                }
+                if current == offer { return snapshot }
+                _ = try OriginalTradeOffer(server: offer)
+                try validateOffer(offer)
+                result = try await api.updateOffer(room: room, offer: offer)
             case .action(let action):
                 guard !needsRefresh else { throw TradingClientError.invalidResponse }
                 // A native handshake cannot authorize a server transfer. The caller

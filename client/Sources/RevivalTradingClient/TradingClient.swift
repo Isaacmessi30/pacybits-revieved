@@ -106,6 +106,7 @@ private struct TradeRequest: Encodable {
     var offer: TradeOffer?
     var inventory: TradeInventory?
     var preserveFirstCopy: Bool?
+    var expectedInventoryVersion: Int?
     var payload: String?
     var scope: String?
     var targetLegacyId: String?
@@ -151,6 +152,11 @@ public actor TradingClient {
     }
     public func importLegacyInventory(_ inventory: TradeInventory, preserveFirstCopy: Bool = false) async throws -> TradingResponse {
         try await send(TradeRequest(action: "importLegacyInventory", inventory: inventory, preserveFirstCopy: preserveFirstCopy ? true : nil))
+    }
+    public func replaceInventory(_ inventory: TradeInventory, expectedVersion: Int, preserveFirstCopy: Bool = true) async throws -> TradingResponse {
+        try await send(TradeRequest(action: "replaceInventory", inventory: inventory,
+                                    preserveFirstCopy: preserveFirstCopy,
+                                    expectedInventoryVersion: expectedVersion))
     }
     public func createInvitation() async throws -> TradingResponse {
         try await send(TradeRequest(action: "invite"))

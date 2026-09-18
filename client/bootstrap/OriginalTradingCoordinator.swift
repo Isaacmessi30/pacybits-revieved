@@ -130,6 +130,9 @@ final class OriginalTradingCoordinator {
         let (client, storage) = try await connect(legacyID: localLegacyID)
         api = client
         ledger = storage
+        let currentWishlist = Array(PBRCurrentWishlistIdentifiers().prefix(50))
+        _ = try await client.setWishlist(cardIDs: currentWishlist)
+        lastWishlistSignature = currentWishlist.joined(separator: "|")
         try await scopedMatch(client, scope: scope, targetLegacyID: targetLegacyID)
     }
 
@@ -357,9 +360,9 @@ final class OriginalTradingCoordinator {
         do {
             if isBotRoom && type == "tradingDidSetWishlist" {
                 let ids = Self.wishlistCardIDs(from: value)
-                let botResponse = try await api.setBotWishlist(roomID: roomID, cardIDs: ids)
-                if !ids.isEmpty { lastWishlistSignature = ids.joined(separator: "|") }
-                try process(botResponse)
+                let wishlistResponse = try await api.setWishlist(cardIDs: ids)
+                lastWishlistSignature = ids.joined(separator: "|")
+                if wishlistResponse.room != nil { try process(wishlistResponse) }
             }
 
             let box: [String:Any] = value == nil ? ["nil": true] : ["value": value!]
@@ -464,14 +467,13 @@ final class OriginalTradingCoordinator {
     }
 
     private func syncNativeWishlistIfNeeded() async throws {
-        guard isBotRoom, screen != nil, let api, let roomID = peerState?.roomID, !closed else { return }
-        let ids = Array(PBRCurrentWishlistIdentifiers().prefix(3))
-        guard !ids.isEmpty else { return }
+        guard screen != nil, let api, !closed else { return }
+        let ids = Array(PBRCurrentWishlistIdentifiers().prefix(50))
         let signature = ids.joined(separator: "|")
         guard signature != lastWishlistSignature else { return }
-        let response = try await api.setBotWishlist(roomID: roomID, cardIDs: ids)
+        let response = try await api.setWishlist(cardIDs: ids)
         lastWishlistSignature = signature
-        try process(response)
+        if response.room != nil { try process(response) }
     }
 
     private func attachNativeScreenIfReady() throws {

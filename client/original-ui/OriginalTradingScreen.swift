@@ -140,12 +140,19 @@ final class OriginalTradingScreen {
         restored = true
     }
 
-    private func requireActive() throws {
+    var isActive: Bool {
         guard !restored, LegacyOutboundBridge.handle != nil,
               UIApplication.shared.applicationState == .active,
               controller.isViewLoaded, controller.view.window != nil,
               let expected = NSClassFromString("_TtC13PACYBITSFUT2021TradingViewController"),
               controller.isKind(of: expected) else {
+            return false
+        }
+        return true
+    }
+
+    private func requireActive() throws {
+        guard isActive else {
             throw RevivalFailure("The original trading screen is not active.")
         }
     }

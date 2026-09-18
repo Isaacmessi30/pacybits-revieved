@@ -267,7 +267,7 @@ final class OriginalTradingCoordinator {
         var renewed = Date()
         while !Task.isCancelled {
             if let room = response.room, room.members.count == 2 {
-                try launch(response)
+                try await launch(response)
                 return
             }
             try await Task.sleep(nanoseconds: 1_250_000_000)
@@ -289,7 +289,7 @@ final class OriginalTradingCoordinator {
         }
     }
 
-    private func launch(_ initial: TradingResponse) throws {
+    private func launch(_ initial: TradingResponse) async throws {
         guard let client = api, let room = initial.room,
               room.members.count == 2 else { throw TradingClientError.invalidResponse }
         let tradeSession = try OriginalTradeSession(api: client, initial: initial) { [weak self] offer in
@@ -304,12 +304,17 @@ final class OriginalTradingCoordinator {
         }
         installOutboundBridge()
 
-        guard PBRStartOriginalNativeMatch("PACYBITS Player") else {
-            throw RevivalFailure("PACYBITS could not start its original match-found transition.")
-        }
+        // Render/room state is the matchmaking authority. Keep PACYBITS' original
+        // searching overlay visible until the server confirms two room members,
+        // then show the original-style found state, remove that overlay completely,
+        // and only after that enter the original Trading controller.
+        PBRShowBackendPlayerFound()
+        try await Task.sleep(nanoseconds: 800_000_000)
+        PBRHideBackendMatchLoading()
+        try await Task.sleep(nanoseconds: 250_000_000)
+
         // Only the legacy synthetic test partner needs a locally injected intro.
-        // A real authenticated bot/peer sends tradingIntro through the backend,
-        // which lets PACYBITS run its normal peer-introduction + wishlist path.
+        // A real authenticated bot/peer sends tradingIntro through the backend.
         if room.testPartner == true {
             try OriginalTradingScreen.primeTradingIntro(peerClubName: "PACYBITS Player")
         }

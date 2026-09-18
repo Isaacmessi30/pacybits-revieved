@@ -98,6 +98,21 @@ final class OriginalTradingScreen {
         receive("tradingIntro", ["value": opponent])
     }
 
+    /// Uses PACYBITS' own app navigation routine. This is the same function the
+    /// empty trading-card slot uses with route "duplicates"; entering trading
+    /// through route "trading" keeps the controller inside the original
+    /// tab/navigation hierarchy instead of presenting it modally.
+    static func openOriginalTradingRoute() throws {
+        let slide = _dyld_get_image_vmaddr_slide(0)
+        guard let entry = UnsafeRawPointer(bitPattern: 0x1002bd8fc + slide) else {
+            throw RevivalFailure("Unsupported PACYBITS navigation routine.")
+        }
+        typealias NativeRoute = @convention(thin) (String, Bool, Bool, Bool) -> Void
+        let navigate = unsafeBitCast(entry, to: NativeRoute.self)
+        navigate("trading", false, false, false)
+    }
+
+
     static func deliverPretradeSignal(_ signal: TradeSignal) throws {
         guard ["new_friend_info", "tradingIntro"].contains(signal.type),
               signal.payload.count <= 12_000,

@@ -65,12 +65,24 @@ export function transitionWithTestPartner(current, uid, input, now, id, enabled 
   if (uid === peerUid || !room.members.includes(peerKey) || room.members.length !== 2) {
     throw new Error('Invalid test partner room');
   }
-  if (room.status === 'open' && ['ready', 'confirm'].includes(input.action)) {
+  if (room.status === 'open' && input.action === 'ready') {
     const peerResult = transition(result.state, peerUid, {
-      action: input.action, roomId, revision: room.revision
+      action: 'ready', roomId, revision: room.revision
     }, now, id);
-    if (peerResult.status !== 200) throw new Error('Test partner action failed');
+    if (peerResult.status !== 200) throw new Error('Test partner ready failed');
     result.state = peerResult.state;
+  }
+  if (room.status === 'open' && input.action === 'confirm') {
+    const humanKey = accountKey(uid);
+    const humanOffer = result.state.rooms[roomId].offers[humanKey] ?? { coins: 0, cards: [] };
+    const isEmpty = humanOffer.coins === 0 && humanOffer.cards.length === 0;
+    if (isEmpty) {
+      const peerResult = transition(result.state, peerUid, {
+        action: 'confirm', roomId, revision: room.revision
+      }, now, id);
+      if (peerResult.status !== 200) throw new Error('Test partner confirm failed');
+      result.state = peerResult.state;
+    }
   }
   // Return the real player's view; never leak the simulated player's identity as self.
   const updated = result.state.rooms[roomId];
@@ -82,6 +94,7 @@ export function transitionWithTestPartner(current, uid, input, now, id, enabled 
     ...result.body.room, revision: updated.revision, status: updated.status,
     self: accountKey(uid), members: updated.members, offers: updated.offers,
     ready: updated.ready, confirmed: updated.confirmed, handshakes: updated.handshakes ?? {},
+    signals: updated.signals ?? {},
     ...(updated.closedAt !== undefined ? { closedAt: updated.closedAt } : {}),
     testPartner: true
   };

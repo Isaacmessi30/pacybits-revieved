@@ -65,6 +65,7 @@ static IMP PBROriginalMatchmakerCancel = NULL;
 static IMP PBROriginalOnlineLoadingCancel = NULL;
 
 static BOOL PBRMenuViewHooked = NO;
+static BOOL PBRMenuTapHooked = NO;
 static BOOL PBRCodeViewHooked = NO;
 static BOOL PBRChannelsViewHooked = NO;
 static BOOL PBRFriendsViewHooked = NO;
@@ -187,7 +188,52 @@ static void PBRTradingMenuViewDidAppear(id receiver, SEL selector, BOOL animated
     if (PBROriginalTradingMenuViewDidAppear) {
         ((void (*)(id, SEL, BOOL))PBROriginalTradingMenuViewDidAppear)(receiver, selector, animated);
     }
-    PBRWireTradingMenu(receiver);
+}
+
+static NSString *PBRTradingModeForGesture(id receiver, UIGestureRecognizer *gesture) {
+    UIView *source = gesture.view;
+    if (!receiver || !source) return nil;
+    for (NSString *getter in @[@"channelsButton", @"friendsButton", @"codeButton", @"randomButton"]) {
+        id value = PBRDynamicValue(receiver, getter);
+        if (value == source) {
+            return [getter stringByReplacingOccurrencesOfString:@"Button" withString:@""];
+        }
+    }
+    return nil;
+}
+
+static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer *gesture) {
+    NSString *mode = PBRTradingModeForGesture(receiver, gesture);
+    if (!mode.length) {
+        if (PBROriginalTradingMenuTap) {
+            ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(receiver, selector, gesture);
+        }
+        return;
+    }
+
+    UIViewController *presenter = [receiver isKindOfClass:UIViewController.class]
+        ? receiver : [[PBRRevivalBootstrap shared] topPresenter];
+    if (!presenter) return;
+
+    PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
+    PBRPrepareGoogle(presenter, ^(BOOL ok) {
+        if (!ok) {
+            PBRTradingArmedUntil = 0;
+            return;
+        }
+
+        PBRExposeTradingAsConnected();
+
+        // Start revival matchmaking before PACYBITS enters its retired GameKit
+        // flow. This direct method hook is independent of view/gesture rewiring.
+        if ([mode isEqualToString:@"random"]) {
+            PBRBeginScope(@"g:0:a:0", nil);
+        }
+
+        if (PBROriginalTradingMenuTap) {
+            ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(receiver, selector, gesture);
+        }
+    });
 }
 
 @implementation PBRRevivalBootstrap (TradingTiles)
@@ -410,10 +456,8 @@ static BOOL PBRInstallMethodHookOnce(Class cls, SEL selector, IMP replacement, I
 
 static void PBRInstallRevivalHooks(void) {
     Class menu = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
-    if (menu && !PBROriginalTradingMenuTap) {
-        Method tap = class_getInstanceMethod(menu, NSSelectorFromString(@"buttonTapHandlerWithGesture:"));
-        if (tap) PBROriginalTradingMenuTap = method_getImplementation(tap);
-    }
+    PBRInstallMethodHookOnce(menu, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
+                             (IMP)PBRTradingMenuTapHook, &PBROriginalTradingMenuTap, &PBRMenuTapHooked);
     PBRInstallMethodHookOnce(menu, NSSelectorFromString(@"viewDidAppear:"),
                              (IMP)PBRTradingMenuViewDidAppear, &PBROriginalTradingMenuViewDidAppear, &PBRMenuViewHooked);
 

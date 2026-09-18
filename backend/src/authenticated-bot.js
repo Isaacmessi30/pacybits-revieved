@@ -230,16 +230,18 @@ export class AuthenticatedRandomBot {
     const fresh = current;
     if (fresh.status !== 'open') { await sleep(1400); return; }
 
-    if (fresh.ready?.[peer] === fresh.revision && fresh.ready?.[self] !== fresh.revision) {
+    if (fresh.ready?.[self] !== fresh.revision) {
       await this.call({ action: 'ready', roomId: fresh.id, revision: fresh.revision });
-      await sleep(1000);
+      this.log(JSON.stringify({ event: 'authBot', status: 'ready', room: fresh.id }));
+      await sleep(700);
       return;
     }
 
     if (fresh.ready?.[peer] === fresh.revision && fresh.ready?.[self] === fresh.revision &&
         fresh.confirmed?.[peer] === fresh.revision && fresh.confirmed?.[self] !== fresh.revision) {
       await this.call({ action: 'confirm', roomId: fresh.id, revision: fresh.revision });
-      await sleep(1000);
+      this.log(JSON.stringify({ event: 'authBot', status: 'confirmed', room: fresh.id }));
+      await sleep(700);
       return;
     }
 

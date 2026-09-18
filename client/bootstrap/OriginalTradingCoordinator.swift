@@ -267,6 +267,12 @@ final class OriginalTradingCoordinator {
             throw RevivalFailure("PACYBITS could not start its original match-found transition.")
         }
 
+        // A real PACYBITS peer sends tradingIntro immediately after matchmaking.
+        // The synthetic backend opponent has no GameKit process, so explicitly
+        // drive the inspected native receiver through that same state transition
+        // before attempting any storyboard fallback.
+        try OriginalTradingScreen.primeTradingIntro(peerClubName: "PACYBITS Player")
+
         try process(initial)
         try attachNativeScreenIfReady()
         pollTask = Task { @MainActor [weak self] in await self?.pollLoop() }

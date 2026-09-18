@@ -94,6 +94,7 @@ static IMP PBROriginalTradeLeaveTap = NULL;
 static IMP PBROriginalWishlistCardsSetter = NULL;
 static NSMutableArray<NSString *> *PBRCachedWishlistIdentifiers = nil;
 static void (^PBRPendingFindMatchCompletion)(GKMatch *, NSError *) = nil;
+static BOOL PBRUsedNativeFindCompletion = NO;
 
 static BOOL PBRMenuTapHooked = NO;
 static BOOL PBRCodeViewHooked = NO;
@@ -300,6 +301,14 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
 
     PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
     PBRExposeTradingAsConnected();
+
+    // Capture PACYBITS' Swift Array through its exported getters before the menu
+    // leaves the hierarchy. Swift-backed fields are not reliable via ObjC ivars.
+    for (NSString *key in @[@"wishlistCards", @"wishlistPlayers", @"wishlist"]) {
+        id value = PBRDynamicValue(receiver, key);
+        if (value) PBRCaptureWishlist(value);
+        if (PBRCachedWishlistIdentifiers.count) break;
+    }
 
     // Random must start the real revival coordinator immediately. The
     // coordinator already owns Google/Firebase authentication, so do not gate
@@ -872,6 +881,7 @@ __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
 
 BOOL PBRStartOriginalNativeMatch(NSString *peerAlias) {
     (void)peerAlias;
+    PBRUsedNativeFindCompletion = NO;
     PBRHealthBeacon(@"native-start");
     @try {
         intptr_t slide = _dyld_get_image_vmaddr_slide(0);
@@ -898,6 +908,7 @@ BOOL PBRStartOriginalNativeMatch(NSString *peerAlias) {
         if (PBRPendingFindMatchCompletion) {
             void (^completion)(GKMatch *, NSError *) = PBRPendingFindMatchCompletion;
             PBRPendingFindMatchCompletion = nil;
+            PBRUsedNativeFindCompletion = YES;
             PBRHealthBeacon(@"native-player-found");
             completion((GKMatch *)match, nil);
             PBRHealthBeacon(@"native-find-completion-return");
@@ -913,6 +924,10 @@ BOOL PBRStartOriginalNativeMatch(NSString *peerAlias) {
         PBRHealthBeacon(@"native-exception");
         return NO;
     }
+}
+
+BOOL PBRNativeFindCompletionWasUsed(void) {
+    return PBRUsedNativeFindCompletion;
 }
 
 static UIViewController *PBRFindTradingControllerInTree(UIViewController *controller, Class expected) {
@@ -1145,7 +1160,14 @@ NSArray<NSString *> *PBRCurrentWishlistIdentifiers(void) {
         @try {
             intptr_t slide = _dyld_get_image_vmaddr_slide(0);
             void *raw = *(void **)(uintptr_t)(0x1012be350ULL + slide);
-            if (raw) PBRCollectWishlistIvars((__bridge id)raw, result, seen);
+            if (raw) {
+                id helper = (__bridge id)raw;
+                for (NSString *key in @[@"wishlist", @"wishlistPlayers", @"wishlistCards"]) {
+                    id value = PBRDynamicValue(helper, key);
+                    if (value) PBRAppendWishlistCandidate(value, result, seen, 0);
+                }
+                PBRCollectWishlistIvars(helper, result, seen);
+            }
         } @catch (NSException *ignored) {}
 
         if (result.count) PBRHealthBeacon(@"fallback-wishlist");

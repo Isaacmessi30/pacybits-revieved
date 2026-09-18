@@ -6,7 +6,12 @@ export function createTradingHTTPServer(trade) {
     const reply = (status, body, extra = {}) => {
       const path = req.url?.split('?')[0] ?? '';
       const rawProbe = req.headers['x-revival-probe'];
-      const probe = ['bootstrap', 'random-tap'].includes(rawProbe) ? rawProbe : undefined;
+      const safeProbes = [
+        'bootstrap', 'random-tap', 'auth-start', 'auth-session-ok',
+        'auth-login-start', 'auth-login-ok', 'auth-session-error',
+        'register-start', 'register-ok'
+      ];
+      const probe = safeProbes.includes(rawProbe) ? rawProbe : undefined;
       console.log(JSON.stringify({ event: 'http', method: req.method, path, status, ...(probe ? { probe } : {}) }));
       res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff', ...extra });

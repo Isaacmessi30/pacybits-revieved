@@ -9,6 +9,13 @@ final class OriginalTradingCoordinator {
 
     private static var active: OriginalTradingCoordinator?
 
+    private static func probe(_ label: String) async {
+        guard let url = URL(string: "https://pacybits-revival-trading.onrender.com/healthz") else { return }
+        var request = URLRequest(url: url)
+        request.setValue(label, forHTTPHeaderField: "X-Revival-Probe")
+        _ = try? await URLSession.shared.data(for: request)
+    }
+
     static var hasActiveMatch: Bool { active != nil }
 
     /// Authenticates before PACYBITS enters any trading mode. A cached Firebase
@@ -124,16 +131,25 @@ final class OriginalTradingCoordinator {
             try await Task.sleep(nanoseconds: 1_000_000_000)
         }
         guard awake else { throw RevivalFailure("Trading server is unavailable.") }
+        await Self.probe("auth-start")
 
         let credentials: FirebaseSession
         do {
             credentials = try await auth.session()
+            await Self.probe("auth-session-ok")
         } catch FirebaseAuthenticationError.signInRequired {
+            await Self.probe("auth-login-start")
             credentials = try await GoogleBrowserLogin(configuration: config, authentication: auth)
                 .signIn(presenting: presenter)
+            await Self.probe("auth-login-ok")
         } catch FirebaseAuthenticationError.rejected(let status) where [400, 401, 403].contains(status) {
+            await Self.probe("auth-login-start")
             credentials = try await GoogleBrowserLogin(configuration: config, authentication: auth)
                 .signIn(presenting: presenter)
+            await Self.probe("auth-login-ok")
+        } catch {
+            await Self.probe("auth-session-error")
+            throw error
         }
         firebaseUID = credentials.uid
 
@@ -141,7 +157,9 @@ final class OriginalTradingCoordinator {
             endpoint: URL(string: "https://pacybits-revival-trading.onrender.com/trading")!) {
                 try await auth.session()
             }
+        await Self.probe("register-start")
         let registered = try await client.register(legacyID: legacyID)
+        await Self.probe("register-ok")
         let storage = try RevivalInventoryLedger(uid: credentials.uid)
         if registered.inventoryReady == false {
             let local = try storage.prepareImport(uid: credentials.uid)
@@ -474,8 +492,11 @@ final class OriginalTradingCoordinator {
         let message: String
         if case TradingClientError.server(_, let code) = error { message = "Trading server: \(code)" }
         else { message = error.localizedDescription }
-        let owner = screen?.controller ?? presenter
-        guard let owner, owner.presentedViewController == nil else { return }
+        var owner = screen?.controller ?? presenter
+        while let presented = owner?.presentedViewController {
+            owner = presented
+        }
+        guard let owner else { return }
         let alert = UIAlertController(title: "Trading", message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         owner.present(alert, animated: true)

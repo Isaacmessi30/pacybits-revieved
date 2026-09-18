@@ -608,6 +608,26 @@ static UIViewController *PBRFindTradingControllerInTree(UIViewController *contro
     return nil;
 }
 
+static UIViewController *PBRRawOriginalTrading(void) {
+    @try {
+        Class expected = NSClassFromString(@"_TtC13PACYBITSFUT2021TradingViewController");
+        if (!expected) return nil;
+        intptr_t slide = _dyld_get_image_vmaddr_slide(0);
+        void *raw = *(void **)(uintptr_t)(0x1012bef00ULL + slide);
+        if (!raw) return nil;
+        id controller = (__bridge id)raw;
+        return [controller isKindOfClass:expected] ? controller : nil;
+    } @catch (NSException *exception) {
+        return nil;
+    }
+}
+
+static BOOL PBRControllerIsAttached(UIViewController *controller) {
+    if (!controller) return NO;
+    if (controller.presentingViewController || controller.navigationController) return YES;
+    return controller.isViewLoaded && controller.view.window != nil;
+}
+
 UIViewController *PBRCurrentOriginalTrading(void) {
     Class expected = NSClassFromString(@"_TtC13PACYBITSFUT2021TradingViewController");
     if (!expected) {
@@ -615,33 +635,37 @@ UIViewController *PBRCurrentOriginalTrading(void) {
         return nil;
     }
 
-    @try {
-        intptr_t slide = _dyld_get_image_vmaddr_slide(0);
-        void *raw = *(void **)(uintptr_t)(0x1012bef00ULL + slide);
-        if (raw) {
-            id controller = (__bridge id)raw;
-            if ([controller isKindOfClass:expected]) {
-                PBRHealthBeacon(@"screen-found");
-                return controller;
-            }
-        }
-    } @catch (NSException *exception) {}
+    UIViewController *raw = PBRRawOriginalTrading();
+    if (raw && PBRControllerIsAttached(raw)) {
+        PBRHealthBeacon(@"screen-found");
+        return raw;
+    }
 
     UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
     UIViewController *found = PBRFindTradingControllerInTree(window.rootViewController, expected);
-    PBRHealthBeacon(found ? @"screen-found" : @"screen-missing");
-    return found;
+    if (found && PBRControllerIsAttached(found)) {
+        PBRHealthBeacon(@"screen-found");
+        return found;
+    }
+
+    PBRHealthBeacon(@"screen-missing");
+    return nil;
 }
 
 UIViewController *PBRPresentOriginalTradingFallback(void) {
     UIViewController *existing = PBRCurrentOriginalTrading();
     if (existing) return existing;
 
-    UIViewController *controller = PBRInstantiateOriginalTrading();
+    // PACYBITS often creates/configures the real TradingViewController when its
+    // match-found callback fires but fails to attach it after retired Game Center.
+    // Prefer that exact configured instance over constructing a second one.
+    UIViewController *controller = PBRRawOriginalTrading();
+    if (!controller) controller = PBRInstantiateOriginalTrading();
     if (!controller) return nil;
 
     UIViewController *presenter = [[PBRRevivalBootstrap shared] topPresenter];
     if (!presenter) return nil;
+    if (presenter == controller) return controller;
 
     controller.modalPresentationStyle = UIModalPresentationFullScreen;
     [presenter presentViewController:controller animated:NO completion:nil];

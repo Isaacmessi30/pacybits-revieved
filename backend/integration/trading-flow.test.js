@@ -77,4 +77,32 @@ test('full HTTP Random flow reaches service and auto-pairs a test partner', asyn
   assert.equal(status.status, 200);
   assert.equal(status.body.room.members.length, 2);
   assert.equal(status.body.room.id, queued.body.room.id);
+
+  // Continue like a normal user performing a safe zero-value trade. The
+  // synthetic partner mirrors Ready/Confirm only for an empty offer, so this
+  // exercises the full room lifecycle without minting or consuming inventory.
+  const ready = await post({
+    action: 'ready',
+    roomId: queued.body.room.id,
+    revision: status.body.room.revision
+  });
+  assert.equal(ready.status, 200);
+  assert.equal(ready.body.room.status, 'open');
+  assert.equal(Object.keys(ready.body.room.ready).length, 2);
+
+  const confirmed = await post({
+    action: 'confirm',
+    roomId: queued.body.room.id,
+    revision: ready.body.room.revision
+  });
+  assert.equal(confirmed.status, 200);
+  assert.equal(confirmed.body.room.status, 'completed');
+  assert.equal(confirmed.body.room.testPartner, true);
+  assert.equal(Object.keys(confirmed.body.room.confirmed).length, 2);
+  assert.ok(Object.keys(confirmed.body.room.handshakes).length >= 1);
+
+  const completedStatus = await post({ action: 'status', roomId: queued.body.room.id });
+  assert.equal(completedStatus.status, 200);
+  assert.equal(completedStatus.body.room.status, 'completed');
+  assert.equal(completedStatus.body.room.members.length, 2);
 });

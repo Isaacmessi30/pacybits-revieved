@@ -53,6 +53,7 @@ final class OriginalTradingCoordinator {
     private var localHandshakeSent = false
     private var nativeSettlementStarted = false
     private var nativeScreenMisses = 0
+    private var detachedScreenChecks = 0
     private var lastPeerSignalSeq = 0
     private var closed = false
     private var firebaseUID: String?
@@ -339,12 +340,22 @@ final class OriginalTradingCoordinator {
         while !Task.isCancelled && !closed {
             do {
                 try await Task.sleep(nanoseconds: 500_000_000)
-                if let screen,
-                   screen.controller.presentingViewController == nil &&
-                   screen.controller.navigationController == nil &&
-                   screen.controller.view.window == nil {
-                    cleanup(cancelServer: true)
-                    return
+                if let screen {
+                    let attached = screen.controller.presentingViewController != nil ||
+                                   screen.controller.navigationController != nil ||
+                                   screen.controller.view.window != nil
+                    if attached {
+                        detachedScreenChecks = 0
+                    } else {
+                        detachedScreenChecks += 1
+                        // UIKit presentation can span a run-loop turn. Do not
+                        // destroy a successfully paired room while the original
+                        // PACYBITS controller is still being attached.
+                        if detachedScreenChecks >= 6 {
+                            cleanup(cancelServer: true)
+                            return
+                        }
+                    }
                 }
                 guard let session else { return }
                 try process(try await session.refresh())
@@ -360,6 +371,7 @@ final class OriginalTradingCoordinator {
         if let native = try OriginalTradingScreen.attachCurrent(peerClubName: "PACYBITS Player") {
             screen = native
             nativeScreenMisses = 0
+            detachedScreenChecks = 0
             return
         }
 
@@ -374,6 +386,7 @@ final class OriginalTradingCoordinator {
             existingController: controller,
             updateProfile: true)
         nativeScreenMisses = 0
+        detachedScreenChecks = 0
     }
 
     private func process(_ response: TradingResponse) throws {

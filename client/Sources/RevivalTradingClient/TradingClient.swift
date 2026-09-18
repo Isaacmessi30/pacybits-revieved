@@ -26,6 +26,12 @@ public struct TradeInventory: Codable, Equatable, Sendable {
     public init(coins: Int, cards: [String: Int]) { self.coins = coins; self.cards = cards }
 }
 
+public struct TradeSignal: Codable, Equatable, Sendable {
+    public let seq: Int
+    public let type: String
+    public let payload: String
+}
+
 public struct TradeRoom: Codable, Equatable, Sendable {
     public let id: String
     public let status: String
@@ -37,16 +43,21 @@ public struct TradeRoom: Codable, Equatable, Sendable {
     public let ready: [String: Int]
     public let confirmed: [String: Int]
     public let handshakes: [String: String]?
+    public let signals: [String: [TradeSignal]]?
     public let closedAt: Int64?
 
     enum CodingKeys: String, CodingKey {
-        case id, status, expiresAt, revision, members, offers, ready, confirmed, handshakes, closedAt
+        case id, status, expiresAt, revision, members, offers, ready, confirmed, handshakes, signals, closedAt
         case selfKey = "self"
     }
     public var isCompleted: Bool { status == "completed" }
     public var peerHandshake: String? {
         guard let peer = members.first(where: { $0 != selfKey }) else { return nil }
         return handshakes?[peer]
+    }
+    public var peerSignals: [TradeSignal] {
+        guard let peer = members.first(where: { $0 != selfKey }) else { return [] }
+        return signals?[peer] ?? []
     }
 }
 
@@ -108,6 +119,8 @@ private struct TradeRequest: Encodable {
     var preserveFirstCopy: Bool?
     var expectedInventoryVersion: Int?
     var payload: String?
+    var signalType: String?
+    var signalPayload: String?
     var scope: String?
     var targetLegacyId: String?
     var legacyId: String?
@@ -181,6 +194,10 @@ public actor TradingClient {
     }
     public func nativeHandshake(roomID: String, payload: String) async throws -> TradingResponse {
         try await send(TradeRequest(action: "handshake", roomId: roomID, payload: payload))
+    }
+    public func sendSignal(roomID: String, type: String, payload: String) async throws -> TradingResponse {
+        try await send(TradeRequest(action: "signal", roomId: roomID,
+                                    signalType: type, signalPayload: payload))
     }
     public func cancel(roomID: String) async throws -> TradingResponse {
         try await send(TradeRequest(action: "cancel", roomId: roomID))

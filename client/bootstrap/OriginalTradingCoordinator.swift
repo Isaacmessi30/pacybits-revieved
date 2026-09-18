@@ -45,6 +45,7 @@ final class OriginalTradingCoordinator {
     private var matchmakingTask: Task<Void, Never>?
     private var localHandshakeSent = false
     private var nativeSettlementStarted = false
+    private var lastPeerSignalSeq = 0
     private var closed = false
     private var firebaseUID: String?
 
@@ -237,7 +238,13 @@ final class OriginalTradingCoordinator {
         peerState = try OriginalTradePeerState(room: room)
         installOutboundBridge()
         native.controller.modalPresentationStyle = .fullScreen
-        presenter.present(native.controller, animated: true)
+        if let navigation = presenter.navigationController {
+            navigation.pushViewController(native.controller, animated: false)
+        } else if let navigation = presenter as? UINavigationController {
+            navigation.pushViewController(native.controller, animated: false)
+        } else {
+            presenter.present(native.controller, animated: false)
+        }
         pollTask = Task { @MainActor [weak self] in await self?.pollLoop() }
     }
 
@@ -246,6 +253,10 @@ final class OriginalTradingCoordinator {
             guard let self, !self.closed else { return false }
             if type == "tradingHandshake" {
                 Task { @MainActor in await self.handleHandshake(value) }
+                return true
+            }
+            if Self.presentationSignalTypes.contains(type) {
+                Task { @MainActor in await self.submitSignal(type: type, value: value) }
                 return true
             }
             do {
@@ -257,6 +268,29 @@ final class OriginalTradingCoordinator {
                 Task { @MainActor in self.showError(error) }
             }
             return true
+        }
+    }
+
+    private static let presentationSignalTypes: Set<String> = [
+        "emote",
+        "tradingStartAnimatingOutline", "tradingStopAnimatingOutline",
+        "tradingStartAnimatingWishlist", "tradingStopAnimatingWishlist",
+        "tradingThumbsOutline"
+    ]
+
+    private func submitSignal(type: String, value: Any?) async {
+        guard let api, let roomID = peerState?.roomID, !closed else { return }
+        do {
+            let box: [String:Any] = value == nil ? ["nil": true] : ["value": value!]
+            guard PropertyListSerialization.propertyList(box, isValidFor: .binary) else {
+                throw RevivalFailure("PACYBITS could not encode this trading UI event.")
+            }
+            let data = try PropertyListSerialization.data(fromPropertyList: box, format: .binary, options: 0)
+            guard data.count <= 8_192 else { throw RevivalFailure("Trading UI event is too large.") }
+            let response = try await api.sendSignal(roomID: roomID, type: type, payload: data.base64EncodedString())
+            try process(response)
+        } catch {
+            showError(error)
         }
     }
 
@@ -294,6 +328,12 @@ final class OriginalTradingCoordinator {
         let next = try OriginalTradePeerState(room: room)
         let events = try next.events(after: peerState)
         if !events.isEmpty { try screen?.render(events) }
+        if let screen {
+            for signal in room.peerSignals.sorted(by: { $0.seq < $1.seq }) where signal.seq > lastPeerSignalSeq {
+                try screen.renderSignal(signal)
+                lastPeerSignalSeq = max(lastPeerSignalSeq, signal.seq)
+            }
+        }
         peerState = next
         if room.isCompleted {
             guard response.inventory != nil, (response.inventoryVersion ?? 0) > 0 else {

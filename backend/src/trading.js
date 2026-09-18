@@ -5,7 +5,9 @@ const MAX_COINS = 1_000_000_000;
 const MAX_COPIES = 1_000_000;
 const SAFE_ID = /^[a-zA-Z0-9_-]{1,128}$/;
 const SAFE_SCOPE = /^[a-zA-Z0-9:_-]{1,128}$/;
-const ACTIONS = new Set(['register', 'importLegacyInventory', 'replaceInventory', 'status', 'invite', 'join', 'queue', 'leaveQueue', 'offer', 'ready', 'confirm', 'handshake', 'cancel']);
+const ACTIONS = new Set(['register', 'importLegacyInventory', 'replaceInventory', 'status', 'invite', 'join', 'queue', 'leaveQueue', 'offer', 'ready', 'confirm', 'handshake', 'signal', 'cancel']);
+const SIGNAL_TYPES = new Set(['emote', 'tradingStartAnimatingOutline', 'tradingStopAnimatingOutline',
+  'tradingStartAnimatingWishlist', 'tradingStopAnimatingWishlist', 'tradingThumbsOutline']);
 
 export class TradeError extends Error {
   constructor(code, status = 400) { super(code); this.code = code; this.status = status; }
@@ -66,7 +68,7 @@ function createRoom(state, creator, peer, id, now) {
   const members = peer ? [creator, peer] : [creator];
   const room = {
     id, members, status: 'open', createdAt: now, expiresAt: now + ROOM_TTL_MS,
-    revision: 0, offers: {}, ready: {}, confirmed: {}, handshakes: {}
+    revision: 0, offers: {}, ready: {}, confirmed: {}, handshakes: {}, signals: {}, signalSeq: 0
   };
   for (const key of members) {
     account(state, key).activeRoom = id;
@@ -80,6 +82,7 @@ function view(room, key) {
     id: room.id, status: room.status, expiresAt: room.expiresAt, revision: room.revision,
     self: key, members: room.members,
     offers: room.offers, ready: room.ready, confirmed: room.confirmed, handshakes: room.handshakes ?? {},
+    signals: room.signals ?? {},
     ...(room.testPartnerUid ? { testPartner: true } : {}),
     ...(room.closedAt !== undefined ? { closedAt: room.closedAt } : {})
   };
@@ -144,8 +147,8 @@ function settle(state, room, now) {
 }
 function rateLimit(a, now, action) {
   a.limits ??= {};
-  const bucket = action === 'status' ? 'read' : 'write';
-  const capacity = bucket === 'read' ? 90 : 30;
+  const bucket = action === 'status' ? 'read' : action === 'signal' ? 'signal' : 'write';
+  const capacity = bucket === 'read' ? 90 : bucket === 'signal' ? 120 : 30;
   const old = a.limits[bucket] ?? { tokens: capacity, at: now };
   const tokens = Math.min(capacity, old.tokens + Math.max(0, now - old.at) * capacity / 60_000);
   requireValue(tokens >= 1, 'RATE_LIMITED', 429);
@@ -279,6 +282,19 @@ function execute(state, key, input, now, id) {
       return { room: view(room, key), inventory: { coins: a.coins, cards: a.cards },
         inventoryVersion: a.inventoryVersion ?? 0, preserveFirstCopy: a.preserveFirstCopy === true };
     }
+    case 'signal': {
+      const room = roomFor(state, key, input.roomId, now, false);
+      requireValue(SIGNAL_TYPES.has(input.signalType), 'INVALID_SIGNAL_TYPE');
+      requireValue(typeof input.signalPayload === 'string' && input.signalPayload.length > 0
+        && input.signalPayload.length <= 12000 && /^[A-Za-z0-9+/=]+$/.test(input.signalPayload),
+        'INVALID_SIGNAL_PAYLOAD');
+      room.signals ??= {};
+      room.signalSeq = integer(room.signalSeq, 0, Number.MAX_SAFE_INTEGER) ? room.signalSeq + 1 : 1;
+      const list = room.signals[key] ?? [];
+      list.push({ seq: room.signalSeq, type: input.signalType, payload: input.signalPayload });
+      room.signals[key] = list.slice(-32);
+      return { room: view(room, key) };
+    }
     case 'cancel': {
       const room = roomFor(state, key, input.roomId, now, true);
       if (room.status === 'open') stopRoom(state, room, 'cancelled', now);
@@ -292,8 +308,6 @@ function execute(state, key, input, now, id) {
       requireValue(room.members.length === 2, 'WAITING_FOR_PARTNER', 409);
       if (input.action === 'offer') {
         const offer = validOffer(input.offer);
-        requireValue(!room.testPartnerUid || (offer.coins === 0 && offer.cards.length === 0),
-          'TEST_PARTNER_EMPTY_OFFER_ONLY', 409);
         owns(a, offer);
         room.offers[key] = offer;
         room.revision += 1;
@@ -320,7 +334,8 @@ export function transition(current, uid, input, now, newRoomId) {
     if (a.legacyId && SAFE_ID.test(a.legacyId) && !state.legacyIds[a.legacyId]) state.legacyIds[a.legacyId] = key;
   }
   for (const room of Object.values(state.rooms)) {
-    room.ready ??= {}; room.confirmed ??= {}; room.offers ??= {}; room.handshakes ??= {};
+    room.ready ??= {}; room.confirmed ??= {}; room.offers ??= {}; room.handshakes ??= {}; room.signals ??= {};
+    if (!integer(room.signalSeq, 0, Number.MAX_SAFE_INTEGER)) room.signalSeq = 0;
     for (const offer of Object.values(room.offers)) offer.cards ??= [];
   }
   const key = accountKey(uid);
@@ -341,7 +356,8 @@ export function transition(current, uid, input, now, newRoomId) {
       status: ['action', 'roomId'], invite: ['action'], join: ['action', 'roomId'],
       queue: ['action', 'scope', 'targetLegacyId'], leaveQueue: ['action'], cancel: ['action', 'roomId'],
       offer: ['action', 'roomId', 'revision', 'offer'], ready: ['action', 'roomId', 'revision'],
-      confirm: ['action', 'roomId', 'revision'], handshake: ['action', 'roomId', 'payload']
+      confirm: ['action', 'roomId', 'revision'], handshake: ['action', 'roomId', 'payload'],
+      signal: ['action', 'roomId', 'signalType', 'signalPayload']
     };
     requireValue(Object.keys(input).every(k => fields[input.action].includes(k)), 'UNEXPECTED_FIELD');
     expire(state, key, now);

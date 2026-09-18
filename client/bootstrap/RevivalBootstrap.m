@@ -93,6 +93,7 @@ static IMP PBROriginalTradeCancelAcceptTap = NULL;
 static IMP PBROriginalTradeLeaveTap = NULL;
 static IMP PBROriginalWishlistCardsSetter = NULL;
 static NSMutableArray<NSString *> *PBRCachedWishlistIdentifiers = nil;
+static void (^PBRPendingFindMatchCompletion)(GKMatch *, NSError *) = nil;
 
 static BOOL PBRMenuTapHooked = NO;
 static BOOL PBRCodeViewHooked = NO;
@@ -573,6 +574,10 @@ static void PBRFindMatch(id receiver, SEL selector, GKMatchRequest *request, id 
         if (PBROriginalFindMatch) ((void (*)(id, SEL, GKMatchRequest *, id))PBROriginalFindMatch)(receiver, selector, request, completion);
         return;
     }
+    if (completion) {
+        PBRPendingFindMatchCompletion = [completion copy];
+        PBRHealthBeacon(@"native-search-armed");
+    }
     PBRBeginBackendMatch(request);
 }
 
@@ -637,6 +642,7 @@ static void PBRStopRevivalMatch(id loadingView) {
         ((void (*)(id, SEL))objc_msgSend)(launcher, cancel);
     }
     PBRTradingArmedUntil = 0;
+    PBRPendingFindMatchCompletion = nil;
 
     // Keep PACYBITS inside the Trading menu. Its original cancel handler also
     // executes legacy GameKit navigation and can pop the whole screen/app flow.
@@ -668,6 +674,7 @@ static void PBRTradingLeaveTap(id receiver, SEL selector, id gesture) {
         ((void (*)(id, SEL))objc_msgSend)(launcher, cancel);
     }
     PBRTradingArmedUntil = 0;
+    PBRPendingFindMatchCompletion = nil;
 
     __weak id weakDialog = receiver;
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -885,6 +892,19 @@ BOOL PBRStartOriginalNativeMatch(NSString *peerAlias) {
             return NO;
         }
         PBRFakeGKMatch *match = [PBRFakeGKMatch new];
+
+        // Prefer PACYBITS' own GameKit completion path. Its search/loading UI
+        // owns the original "Player Found" state and yellow transition.
+        if (PBRPendingFindMatchCompletion) {
+            void (^completion)(GKMatch *, NSError *) = PBRPendingFindMatchCompletion;
+            PBRPendingFindMatchCompletion = nil;
+            PBRHealthBeacon(@"native-player-found");
+            completion((GKMatch *)match, nil);
+            PBRHealthBeacon(@"native-find-completion-return");
+            return YES;
+        }
+
+        // Fallback for routes that do not use findMatchForRequest: (invite/code).
         PBRHealthBeacon(@"native-callback");
         ((void (*)(id, SEL, id, id))objc_msgSend)(helper, selector, nil, match);
         PBRHealthBeacon(@"native-return");

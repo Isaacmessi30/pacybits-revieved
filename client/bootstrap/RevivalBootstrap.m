@@ -86,6 +86,11 @@ static IMP PBROriginalMatchForInvite = NULL;
 static IMP PBROriginalMatchmakerCancel = NULL;
 static IMP PBROriginalOnlineLoadingCancel = NULL;
 static IMP PBROriginalAboutViewDidAppear = NULL;
+static IMP PBROriginalTradeConfirmTap = NULL;
+static IMP PBROriginalTradeAcceptTap = NULL;
+static IMP PBROriginalTradeMakeChangesTap = NULL;
+static IMP PBROriginalTradeCancelAcceptTap = NULL;
+static IMP PBROriginalTradeLeaveTap = NULL;
 
 static BOOL PBRMenuTapHooked = NO;
 static BOOL PBRCodeViewHooked = NO;
@@ -96,6 +101,11 @@ static BOOL PBRInviteHooked = NO;
 static BOOL PBRCancelHooked = NO;
 static BOOL PBROnlineLoadingCancelHooked = NO;
 static BOOL PBRAboutViewHooked = NO;
+static BOOL PBRTradeConfirmHooked = NO;
+static BOOL PBRTradeAcceptHooked = NO;
+static BOOL PBRTradeMakeChangesHooked = NO;
+static BOOL PBRTradeCancelAcceptHooked = NO;
+static BOOL PBRTradeLeaveHooked = NO;
 
 static char PBRButtonWiredKey;
 static char PBRGestureControllerKey;
@@ -517,6 +527,42 @@ static void PBRMatchForInvite(id receiver, SEL selector, GKInvite *invite, id co
     if (sender.length) PBRBeginScope(@"friends", sender);
 }
 
+static void PBRSubmitNativeFallback(NSString *name) {
+    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    SEL submit = NSSelectorFromString(@"submitNativeFallback:");
+    if (name.length && [launcher respondsToSelector:submit]) {
+        ((void (*)(id, SEL, NSString *))objc_msgSend)(launcher, submit, name);
+    }
+}
+
+static void PBRTradingConfirmTap(id receiver, SEL selector, id gesture) {
+    if (PBROriginalTradeConfirmTap) {
+        ((void (*)(id, SEL, id))PBROriginalTradeConfirmTap)(receiver, selector, gesture);
+    }
+    if (PBRShouldInterceptTrading()) PBRSubmitNativeFallback(@"ready");
+}
+
+static void PBRTradingAcceptTap(id receiver, SEL selector, id gesture) {
+    if (PBROriginalTradeAcceptTap) {
+        ((void (*)(id, SEL, id))PBROriginalTradeAcceptTap)(receiver, selector, gesture);
+    }
+    if (PBRShouldInterceptTrading()) PBRSubmitNativeFallback(@"accept");
+}
+
+static void PBRTradingMakeChangesTap(id receiver, SEL selector, id gesture) {
+    if (PBROriginalTradeMakeChangesTap) {
+        ((void (*)(id, SEL, id))PBROriginalTradeMakeChangesTap)(receiver, selector, gesture);
+    }
+    if (PBRShouldInterceptTrading()) PBRSubmitNativeFallback(@"makeChanges");
+}
+
+static void PBRTradingCancelAcceptTap(id receiver, SEL selector, id gesture) {
+    if (PBROriginalTradeCancelAcceptTap) {
+        ((void (*)(id, SEL, id))PBROriginalTradeCancelAcceptTap)(receiver, selector, gesture);
+    }
+    if (PBRShouldInterceptTrading()) PBRSubmitNativeFallback(@"cancelAcceptance");
+}
+
 static void PBRStopRevivalMatch(id loadingView) {
     Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
     SEL cancel = NSSelectorFromString(@"cancelOriginalMatch");
@@ -535,6 +581,30 @@ static void PBRStopRevivalMatch(id loadingView) {
     UIViewController *top = [[PBRRevivalBootstrap shared] topPresenter];
     if ([top isKindOfClass:GKMatchmakerViewController.class]) {
         [top dismissViewControllerAnimated:YES completion:nil];
+    }
+}
+
+static void PBRTradingLeaveTap(id receiver, SEL selector, id gesture) {
+    if (!PBRShouldInterceptTrading()) {
+        if (PBROriginalTradeLeaveTap) {
+            ((void (*)(id, SEL, id))PBROriginalTradeLeaveTap)(receiver, selector, gesture);
+        }
+        return;
+    }
+
+    // Do not call PACYBITS' retired GameKit leave routine for revival sessions.
+    // Cancel our authenticated room first, hide the original leave dialog, and
+    // return through the visible controller hierarchy without touching GameKit.
+    PBRStopRevivalMatch(receiver);
+    UIViewController *trade = PBRCurrentOriginalTrading();
+    if (trade.presentedViewController) {
+        [trade dismissViewControllerAnimated:NO completion:nil];
+    }
+    UINavigationController *nav = trade.navigationController;
+    if (nav && nav.viewControllers.count > 1) {
+        [nav popViewControllerAnimated:NO];
+    } else if (trade.presentingViewController) {
+        [trade dismissViewControllerAnimated:NO completion:nil];
     }
 }
 
@@ -599,6 +669,22 @@ static void PBRInstallRevivalHooks(void) {
     PBRInstallMethodHookOnce(friends, NSSelectorFromString(@"didMoveToWindow"),
                              (IMP)PBRFriendsDidMoveToWindow, &PBROriginalFriendsDidMoveToWindow, &PBRFriendsViewHooked);
 
+    Class tradingVC = NSClassFromString(@"_TtC13PACYBITSFUT2021TradingViewController");
+    PBRInstallMethodHookOnce(tradingVC, NSSelectorFromString(@"confirmTapHandlerWithGesture:"),
+                             (IMP)PBRTradingConfirmTap, &PBROriginalTradeConfirmTap, &PBRTradeConfirmHooked);
+
+    Class completeTrade = NSClassFromString(@"_TtC13PACYBITSFUT2026DialogTradingCompleteTrade");
+    PBRInstallMethodHookOnce(completeTrade, NSSelectorFromString(@"acceptTapHandlerWithGesture:"),
+                             (IMP)PBRTradingAcceptTap, &PBROriginalTradeAcceptTap, &PBRTradeAcceptHooked);
+    PBRInstallMethodHookOnce(completeTrade, NSSelectorFromString(@"makeChangesTapHandlerWithGesture:"),
+                             (IMP)PBRTradingMakeChangesTap, &PBROriginalTradeMakeChangesTap, &PBRTradeMakeChangesHooked);
+    PBRInstallMethodHookOnce(completeTrade, NSSelectorFromString(@"cancelTapHandlerWithGesture:"),
+                             (IMP)PBRTradingCancelAcceptTap, &PBROriginalTradeCancelAcceptTap, &PBRTradeCancelAcceptHooked);
+
+    Class leaveTrade = NSClassFromString(@"_TtC13PACYBITSFUT2023DialogTradingLeaveTrade");
+    PBRInstallMethodHookOnce(leaveTrade, NSSelectorFromString(@"leaveTapHandlerWithGesture:"),
+                             (IMP)PBRTradingLeaveTap, &PBROriginalTradeLeaveTap, &PBRTradeLeaveHooked);
+
     Class onlineLoading = NSClassFromString(@"_TtC13PACYBITSFUT2013OnlineLoading");
     PBRInstallMethodHookOnce(onlineLoading, NSSelectorFromString(@"cancelTapHandlerWithGesture:"),
                              (IMP)PBROnlineLoadingCancel, &PBROriginalOnlineLoadingCancel, &PBROnlineLoadingCancelHooked);
@@ -638,6 +724,17 @@ static void PBRHealthBeacon(NSString *probe) {
     if (probe.length) [request setValue:probe forHTTPHeaderField:@"X-Revival-Probe"];
     NSURLSessionDataTask *task = [NSURLSession.sharedSession dataTaskWithRequest:request];
     [task resume];
+}
+
+void PBRNativeEventProbe(NSString *label) {
+    if (!label.length) return;
+    NSString *probe = nil;
+    if ([label isEqualToString:@"tradingReady"]) probe = @"sender-ready";
+    else if ([label isEqualToString:@"tradingCompleteTradeAccept"]) probe = @"sender-accept";
+    else if ([label isEqualToString:@"tradingDidSetWishlist"]) probe = @"sender-wishlist";
+    else if ([label isEqualToString:@"tradingPickedOutline"]) probe = @"sender-picked";
+    else probe = @"sender-other";
+    PBRHealthBeacon(probe);
 }
 
 __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
@@ -806,6 +903,40 @@ UIViewController *PBRPresentOriginalTradingFallback(void) {
     controller.modalPresentationStyle = UIModalPresentationFullScreen;
     [presenter presentViewController:controller animated:NO completion:nil];
     return controller;
+}
+
+NSArray<NSString *> *PBRCurrentWishlistIdentifiers(void) {
+    @try {
+        UIViewController *controller = PBRCurrentOriginalTrading();
+        if (!controller) return @[];
+        id source = nil;
+        for (NSString *key in @[@"wishlistPlayers", @"wishlistCards"]) {
+            @try {
+                id value = [controller valueForKey:key];
+                if ([value isKindOfClass:NSArray.class] && [(NSArray *)value count] > 0) {
+                    source = value;
+                    break;
+                }
+            } @catch (NSException *ignored) {}
+        }
+        if (![source isKindOfClass:NSArray.class]) return @[];
+        NSMutableArray<NSString *> *result = [NSMutableArray array];
+        NSMutableSet<NSString *> *seen = [NSMutableSet set];
+        for (id item in (NSArray *)source) {
+            NSString *identifier = nil;
+            if ([item isKindOfClass:NSString.class]) identifier = item;
+            else if ([item isKindOfClass:NSNumber.class]) identifier = [item stringValue];
+            else identifier = PBRPlayerIdentifier(item);
+            if (identifier.length && ![seen containsObject:identifier] && PBRPlayerForIdentifier(identifier)) {
+                [seen addObject:identifier];
+                [result addObject:identifier];
+                if (result.count >= 3) break;
+            }
+        }
+        return result;
+    } @catch (NSException *exception) {
+        return @[];
+    }
 }
 
 NSString *PBRCardLabel(NSString *identifier) {

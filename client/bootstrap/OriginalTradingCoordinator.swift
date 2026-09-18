@@ -56,6 +56,9 @@ final class OriginalTradingCoordinator {
     private var detachedScreenChecks = 0
     private var lastPeerSignalSeq = 0
     private var isBotRoom = false
+    private var lastWishlistSignature: String?
+    private var lastOutboundActionName: String?
+    private var lastOutboundActionAt = Date.distantPast
     private var closed = false
     private var firebaseUID: String?
 
@@ -98,6 +101,27 @@ final class OriginalTradingCoordinator {
 
     static func cancelActiveMatch() {
         active?.cleanup(cancelServer: true)
+    }
+
+    static func submitNativeFallback(_ name: String) {
+        guard let current = active, !current.closed else { return }
+        let action: OriginalTradeAction
+        switch name {
+        case "ready": action = .ready
+        case "accept": action = .accept
+        case "makeChanges": action = .makeChanges
+        case "cancelAcceptance": action = .cancelAcceptance
+        default: return
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !current.closed else { return }
+            if current.lastOutboundActionName == name,
+               Date().timeIntervalSince(current.lastOutboundActionAt) < 0.75 {
+                return
+            }
+            await current.submit(action)
+        }
     }
 
     private func startOriginal(scope: String,
@@ -297,6 +321,16 @@ final class OriginalTradingCoordinator {
                 let action = try OriginalTradeProtocol.decode(type: type, value: value) { object in
                     PBRPlayerIdentifier(object as AnyObject)
                 }
+                let actionName: String
+                switch action {
+                case .ready: actionName = "ready"
+                case .accept: actionName = "accept"
+                case .makeChanges: actionName = "makeChanges"
+                case .cancelAcceptance: actionName = "cancelAcceptance"
+                default: actionName = "other"
+                }
+                self.lastOutboundActionName = actionName
+                self.lastOutboundActionAt = Date()
                 Task { @MainActor in await self.submit(action) }
             } catch {
                 Task { @MainActor in self.showError(error) }
@@ -324,6 +358,7 @@ final class OriginalTradingCoordinator {
             if isBotRoom && type == "tradingDidSetWishlist" {
                 let ids = Self.wishlistCardIDs(from: value)
                 let botResponse = try await api.setBotWishlist(roomID: roomID, cardIDs: ids)
+                if !ids.isEmpty { lastWishlistSignature = ids.joined(separator: "|") }
                 try process(botResponse)
             }
 
@@ -422,9 +457,21 @@ final class OriginalTradingCoordinator {
                 guard let session else { return }
                 try process(try await session.refresh())
                 try attachNativeScreenIfReady()
+                try await syncNativeWishlistIfNeeded()
             } catch is CancellationError { return }
             catch { showError(error) }
         }
+    }
+
+    private func syncNativeWishlistIfNeeded() async throws {
+        guard isBotRoom, screen != nil, let api, let roomID = peerState?.roomID, !closed else { return }
+        let ids = Array(PBRCurrentWishlistIdentifiers().prefix(3))
+        guard !ids.isEmpty else { return }
+        let signature = ids.joined(separator: "|")
+        guard signature != lastWishlistSignature else { return }
+        let response = try await api.setBotWishlist(roomID: roomID, cardIDs: ids)
+        lastWishlistSignature = signature
+        try process(response)
     }
 
     private func attachNativeScreenIfReady() throws {

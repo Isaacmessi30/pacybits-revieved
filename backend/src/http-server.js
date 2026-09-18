@@ -13,7 +13,8 @@ export function createTradingHTTPServer(trade) {
         'bridge-direct-call', 'bridge-direct-failed', 'bridge-direct-return',
         'native-start', 'native-no-helper', 'native-helper-type-failed',
         'native-no-selector', 'native-callback', 'native-return', 'native-exception',
-        'screen-found', 'screen-missing'
+        'screen-found', 'screen-missing',
+        'sender-ready', 'sender-accept', 'sender-wishlist', 'sender-picked', 'sender-other'
       ];
       const probe = safeProbes.includes(rawProbe) ? rawProbe : undefined;
       console.log(JSON.stringify({ event: 'http', method: req.method, path, status, ...(probe ? { probe } : {}) }));

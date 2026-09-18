@@ -108,9 +108,8 @@ final class OriginalTradingScreen {
         guard !restored, LegacyOutboundBridge.handle != nil,
               UIApplication.shared.applicationState == .active,
               controller.isViewLoaded, controller.view.window != nil,
-              UnsafeRawPointer(bitPattern: 0x1012bee6c + slide)!.load(as: UInt8.self) == 1,
-              UnsafeRawPointer(bitPattern: 0x1012bef00 + slide)!.load(as: UnsafeRawPointer?.self) ==
-                UnsafeRawPointer(Unmanaged.passUnretained(controller).toOpaque()) else {
+              let expected = NSClassFromString("_TtC13PACYBITSFUT2021TradingViewController"),
+              controller.isKind(of: expected) else {
             throw RevivalFailure("The original trading screen is not active.")
         }
     }

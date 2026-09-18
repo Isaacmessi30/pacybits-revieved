@@ -3,6 +3,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getDatabase } from 'firebase-admin/database';
 import { createTradingService } from './service.js';
 import { createTradingHTTPServer } from './http-server.js';
+import { AuthenticatedRandomBot } from './authenticated-bot.js';
 
 const projectId = process.env.FIREBASE_PROJECT_ID;
 const databaseURL = process.env.FIREBASE_DATABASE_URL;
@@ -28,7 +29,8 @@ if (!emulator) {
   }
 }
 const app = initializeApp({ projectId, databaseURL, ...(credential ? { credential } : {}) });
-const trade = createTradingService({ auth: getAuth(app), database: getDatabase(app),
+const database = getDatabase(app);
+const trade = createTradingService({ auth: getAuth(app), database,
   testPartnerEnabled: process.env.REVIVAL_TEST_PARTNER_ENABLED === 'true',
   randomBotEnabled: process.env.REVIVAL_RANDOM_BOT_ENABLED === 'true' });
 const server = createTradingHTTPServer(trade);
@@ -36,6 +38,23 @@ const port = Number(process.env.PORT ?? 10000);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT');
 server.listen(port, process.env.REVIVAL_BIND_HOST ?? '0.0.0.0', () => {
   console.log(`Trading API listening on port ${port}`);
+  if (process.env.REVIVAL_AUTHENTICATED_BOT_ENABLED === 'true') {
+    const googleClientId = process.env.REVIVAL_GOOGLE_CLIENT_ID;
+    const firebaseApiKey = process.env.REVIVAL_FIREBASE_API_KEY;
+    const googleRefreshToken = process.env.REVIVAL_BOT_GOOGLE_REFRESH_TOKEN;
+    if (!googleClientId || !firebaseApiKey || !googleRefreshToken) {
+      console.error('Authenticated bot enabled but bot auth secrets are missing');
+    } else {
+      const bot = new AuthenticatedRandomBot({
+        endpoint: `http://127.0.0.1:${port}/trading`,
+        database,
+        googleClientId,
+        firebaseApiKey,
+        googleRefreshToken
+      });
+      bot.start().catch(() => console.error('Authenticated bot stopped'));
+    }
+  }
 });
 process.once('SIGTERM', () => {
   server.close(() => process.exit(0));

@@ -11,3 +11,4 @@ UIViewController * _Nullable PBRPresentOriginalTradingFallback(void);
 
 NSArray<NSString *> * _Nonnull PBRCurrentWishlistIdentifiers(void);
 void PBRNativeEventProbe(NSString * _Nonnull label);
+NSDictionary * _Nonnull PBRCurrentLocalOfferSnapshot(void);

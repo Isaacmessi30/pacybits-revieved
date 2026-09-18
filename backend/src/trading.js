@@ -5,7 +5,7 @@ const MAX_COINS = 1_000_000_000;
 const MAX_COPIES = 1_000_000;
 const SAFE_ID = /^[a-zA-Z0-9_-]{1,128}$/;
 const SAFE_SCOPE = /^[a-zA-Z0-9:_-]{1,128}$/;
-const ACTIONS = new Set(['register', 'importLegacyInventory', 'replaceInventory', 'status', 'invite', 'join', 'queue', 'leaveQueue', 'offer', 'ready', 'confirm', 'handshake', 'signal', 'cancel', 'botWishlist', 'botPeerHandshake']);
+const ACTIONS = new Set(['register', 'importLegacyInventory', 'replaceInventory', 'setWishlist', 'status', 'invite', 'join', 'queue', 'leaveQueue', 'offer', 'ready', 'confirm', 'handshake', 'signal', 'cancel', 'botWishlist', 'botPeerHandshake']);
 const SIGNAL_TYPES = new Set(['new_friend_info', 'tradingIntro',
   'tradingDidSetMessage', 'tradingDidSetFilters', 'tradingDidSetWishlist',
   'emote', 'tradingStartAnimatingOutline', 'tradingStopAnimatingOutline',
@@ -70,11 +70,14 @@ function createRoom(state, creator, peer, id, now) {
   const members = peer ? [creator, peer] : [creator];
   const room = {
     id, members, status: 'open', createdAt: now, expiresAt: now + ROOM_TTL_MS,
-    revision: 0, offers: {}, ready: {}, confirmed: {}, handshakes: {}, signals: {}, signalSeq: 0
+    revision: 0, offers: {}, ready: {}, confirmed: {}, handshakes: {}, signals: {}, signalSeq: 0,
+    wishlists: {}
   };
   for (const key of members) {
-    account(state, key).activeRoom = id;
+    const member = account(state, key);
+    member.activeRoom = id;
     room.offers[key] = { coins: 0, cards: [] };
+    room.wishlists[key] = Array.isArray(member.wishlist) ? [...member.wishlist] : [];
   }
   state.rooms[id] = room;
   return room;
@@ -90,6 +93,17 @@ function view(room, key) {
     ...(room.wishlists ? { wishlists: room.wishlists } : {}),
     ...(room.closedAt !== undefined ? { closedAt: room.closedAt } : {})
   };
+}
+function validatedWishlist(input) {
+  requireValue(Array.isArray(input) && input.length <= 50, 'INVALID_WISHLIST');
+  const seen = new Set();
+  const result = [];
+  for (const card of input) {
+    requireValue(typeof card === 'string' && SAFE_ID.test(card)
+      && !['__proto__', 'constructor', 'prototype'].includes(card), 'INVALID_WISHLIST');
+    if (!seen.has(card)) { seen.add(card); result.push(card); }
+  }
+  return result;
 }
 function validOffer(input) {
   requireValue(plain(input) && ['cards,coins', 'cards,coins,slots'].includes(Object.keys(input).sort().join(',')), 'INVALID_OFFER');
@@ -211,6 +225,19 @@ function execute(state, key, input, now, id) {
       return { inventory: { coins: a.coins, cards: a.cards }, inventoryReady: true,
         inventoryVersion: a.inventoryVersion, inventoryOrigin: a.inventoryOrigin, preserveFirstCopy: true };
     }
+    case 'setWishlist': {
+      const cards = validatedWishlist(input.cardIds);
+      a.wishlist = cards;
+      let room = null;
+      if (a.activeRoom) {
+        room = state.rooms[a.activeRoom] ?? null;
+        if (room?.status === 'open') {
+          room.wishlists ??= {};
+          room.wishlists[key] = [...cards];
+        }
+      }
+      return { ...(room ? { room: view(room, key) } : {}), wishlist: cards };
+    }
     case 'status': {
       const room = input.roomId
         ? roomFor(state, key, input.roomId, now, true)
@@ -234,6 +261,8 @@ function execute(state, key, input, now, id) {
       requireValue(account(state, creator).activeRoom === room.id, 'INVITE_UNAVAILABLE', 409);
       room.members.push(key);
       room.offers[key] = { coins: 0, cards: [] };
+      room.wishlists ??= {};
+      room.wishlists[key] = Array.isArray(a.wishlist) ? [...a.wishlist] : [];
       room.revision += 1;
       room.ready = {}; room.confirmed = {};
       a.activeRoom = room.id;
@@ -363,10 +392,15 @@ export function transition(current, uid, input, now, newRoomId) {
   state.accounts ??= {}; state.rooms ??= {}; state.queue ??= {}; state.legacyIds ??= {};
   for (const [key, a] of Object.entries(state.accounts)) {
     a.cards ??= {};
+    if (Object.hasOwn(a, 'wishlist')) {
+      a.wishlist = Array.isArray(a.wishlist)
+        ? a.wishlist.filter(card => typeof card === 'string' && SAFE_ID.test(card)).slice(0, 50)
+        : [];
+    }
     if (a.legacyId && SAFE_ID.test(a.legacyId) && !state.legacyIds[a.legacyId]) state.legacyIds[a.legacyId] = key;
   }
   for (const room of Object.values(state.rooms)) {
-    room.ready ??= {}; room.confirmed ??= {}; room.offers ??= {}; room.handshakes ??= {}; room.signals ??= {};
+    room.ready ??= {}; room.confirmed ??= {}; room.offers ??= {}; room.handshakes ??= {}; room.signals ??= {}; room.wishlists ??= {};
     if (!integer(room.signalSeq, 0, Number.MAX_SAFE_INTEGER)) room.signalSeq = 0;
     for (const offer of Object.values(room.offers)) offer.cards ??= [];
   }
@@ -385,6 +419,7 @@ export function transition(current, uid, input, now, newRoomId) {
     const fields = {
       register: ['action', 'legacyId'], importLegacyInventory: ['action', 'inventory', 'preserveFirstCopy'],
       replaceInventory: ['action', 'inventory', 'preserveFirstCopy', 'expectedInventoryVersion'],
+      setWishlist: ['action', 'cardIds'],
       status: ['action', 'roomId'], invite: ['action'], join: ['action', 'roomId'],
       queue: ['action', 'scope', 'targetLegacyId'], leaveQueue: ['action'], cancel: ['action', 'roomId'],
       offer: ['action', 'roomId', 'revision', 'offer'], ready: ['action', 'roomId', 'revision'],

@@ -57,6 +57,7 @@ final class OriginalTradingCoordinator {
     private var lastPeerSignalSeq = 0
     private var isBotRoom = false
     private var lastWishlistSignature: String?
+    private var lastNativeOfferSignature: String?
     private var lastOutboundActionName: String?
     private var lastOutboundActionAt = Date.distantPast
     private var closed = false
@@ -130,6 +131,9 @@ final class OriginalTradingCoordinator {
         let (client, storage) = try await connect(legacyID: localLegacyID)
         api = client
         ledger = storage
+        let currentWishlist = Array(PBRCurrentWishlistIdentifiers().prefix(50))
+        _ = try await client.setWishlist(cardIDs: currentWishlist)
+        lastWishlistSignature = currentWishlist.joined(separator: "|")
         try await scopedMatch(client, scope: scope, targetLegacyID: targetLegacyID)
     }
 
@@ -287,6 +291,9 @@ final class OriginalTradingCoordinator {
         session = tradeSession
         peerState = try OriginalTradePeerState(room: room)
         isBotRoom = room.botPartner == true
+        if let own = room.offers[room.selfKey] {
+            lastNativeOfferSignature = Self.offerSignature(own)
+        }
         installOutboundBridge()
 
         guard PBRStartOriginalNativeMatch("PACYBITS Player") else {
@@ -357,9 +364,9 @@ final class OriginalTradingCoordinator {
         do {
             if isBotRoom && type == "tradingDidSetWishlist" {
                 let ids = Self.wishlistCardIDs(from: value)
-                let botResponse = try await api.setBotWishlist(roomID: roomID, cardIDs: ids)
-                if !ids.isEmpty { lastWishlistSignature = ids.joined(separator: "|") }
-                try process(botResponse)
+                let wishlistResponse = try await api.setWishlist(cardIDs: ids)
+                lastWishlistSignature = ids.joined(separator: "|")
+                if wishlistResponse.room != nil { try process(wishlistResponse) }
             }
 
             let box: [String:Any] = value == nil ? ["nil": true] : ["value": value!]
@@ -458,20 +465,52 @@ final class OriginalTradingCoordinator {
                 try process(try await session.refresh())
                 try attachNativeScreenIfReady()
                 try await syncNativeWishlistIfNeeded()
+                try await syncNativeOfferIfNeeded()
             } catch is CancellationError { return }
             catch { showError(error) }
         }
     }
 
+    private static func offerSignature(_ offer: TradeOffer) -> String {
+        let slots = offer.slots ?? []
+        return "\(offer.coins)|" + zip(offer.cards, slots).map { "\($0.0)@\($0.1)" }.joined(separator: ",")
+    }
+
+    private func nativeOffer() throws -> TradeOffer {
+        let raw = PBRCurrentLocalOfferSnapshot()
+        guard let coinsNumber = raw["coins"] as? NSNumber,
+              let cards = raw["cards"] as? [String],
+              let slotsNumber = raw["slots"] as? [NSNumber],
+              cards.count == slotsNumber.count,
+              cards.count <= 3 else {
+            throw TradingClientError.invalidResponse
+        }
+        let slots = slotsNumber.map(\.intValue)
+        guard slots.allSatisfy({ (0...2).contains($0) }),
+              Set(slots).count == slots.count else {
+            throw TradingClientError.invalidResponse
+        }
+        return TradeOffer(coins: coinsNumber.intValue, cards: cards, slots: slots)
+    }
+
+    private func syncNativeOfferIfNeeded() async throws {
+        guard screen != nil, let session, !closed else { return }
+        let offer = try nativeOffer()
+        let signature = Self.offerSignature(offer)
+        guard signature != lastNativeOfferSignature else { return }
+        let response = try await session.replaceOffer(offer)
+        lastNativeOfferSignature = signature
+        try process(response)
+    }
+
     private func syncNativeWishlistIfNeeded() async throws {
-        guard isBotRoom, screen != nil, let api, let roomID = peerState?.roomID, !closed else { return }
-        let ids = Array(PBRCurrentWishlistIdentifiers().prefix(3))
-        guard !ids.isEmpty else { return }
+        guard screen != nil, let api, !closed else { return }
+        let ids = Array(PBRCurrentWishlistIdentifiers().prefix(50))
         let signature = ids.joined(separator: "|")
         guard signature != lastWishlistSignature else { return }
-        let response = try await api.setBotWishlist(roomID: roomID, cardIDs: ids)
+        let response = try await api.setWishlist(cardIDs: ids)
         lastWishlistSignature = signature
-        try process(response)
+        if response.room != nil { try process(response) }
     }
 
     private func attachNativeScreenIfReady() throws {

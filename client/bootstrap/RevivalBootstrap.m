@@ -965,12 +965,61 @@ NSArray<NSString *> *PBRCurrentWishlistIdentifiers(void) {
             if (identifier.length && ![seen containsObject:identifier] && PBRPlayerForIdentifier(identifier)) {
                 [seen addObject:identifier];
                 [result addObject:identifier];
-                if (result.count >= 3) break;
+                if (result.count >= 50) break;
             }
         }
         return result;
     } @catch (NSException *exception) {
         return @[];
+    }
+}
+
+NSDictionary *PBRCurrentLocalOfferSnapshot(void) {
+    @try {
+        UIViewController *controller = PBRCurrentOriginalTrading();
+        if (!controller) return @{@"coins": @0, @"cards": @[], @"slots": @[]};
+
+        NSMutableArray<NSString *> *cards = [NSMutableArray array];
+        NSMutableArray<NSNumber *> *slots = [NSMutableArray array];
+        id rawCards = nil;
+        @try { rawCards = [controller valueForKey:@"cardsLeft"]; } @catch (NSException *ignored) {}
+        if ([rawCards isKindOfClass:NSArray.class]) {
+            NSInteger slot = 0;
+            for (id tradingCard in (NSArray *)rawCards) {
+                if (slot >= 3) break;
+                id smallCard = nil;
+                id player = nil;
+                @try { smallCard = [tradingCard valueForKey:@"card"]; } @catch (NSException *ignored) {}
+                @try { player = [smallCard valueForKey:@"player"]; } @catch (NSException *ignored) {}
+                NSString *identifier = PBRPlayerIdentifier(player);
+                if (identifier.length && PBRPlayerForIdentifier(identifier)) {
+                    [cards addObject:identifier];
+                    [slots addObject:@(slot)];
+                }
+                slot += 1;
+            }
+        }
+
+        NSInteger coins = 0;
+        id coinsButton = nil;
+        id textField = nil;
+        @try { coinsButton = [controller valueForKey:@"coinsButtonLeft"]; } @catch (NSException *ignored) {}
+        @try { textField = [coinsButton valueForKey:@"textField"]; } @catch (NSException *ignored) {}
+        NSString *text = [textField respondsToSelector:@selector(text)] ? [textField text] : nil;
+        if ([text isKindOfClass:NSString.class] && text.length) {
+            NSMutableString *digits = [NSMutableString string];
+            NSCharacterSet *decimal = NSCharacterSet.decimalDigitCharacterSet;
+            for (NSUInteger i = 0; i < text.length; i++) {
+                unichar ch = [text characterAtIndex:i];
+                if ([decimal characterIsMember:ch]) [digits appendFormat:@"%C", ch];
+            }
+            long long value = digits.longLongValue;
+            if (value > 0 && value <= NSIntegerMax) coins = (NSInteger)value;
+        }
+
+        return @{@"coins": @(coins), @"cards": cards, @"slots": slots};
+    } @catch (NSException *exception) {
+        return @{@"coins": @0, @"cards": @[], @"slots": @[]};
     }
 }
 

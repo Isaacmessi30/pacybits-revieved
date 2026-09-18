@@ -194,6 +194,8 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
         return;
     }
 
+    if ([mode isEqualToString:@"random"]) PBRHealthBeacon(@"random-tap");
+
     UIViewController *presenter = [receiver isKindOfClass:UIViewController.class]
         ? receiver : [[PBRRevivalBootstrap shared] topPresenter];
     if (!presenter) return;
@@ -479,7 +481,9 @@ static void PBRInstallRevivalHooks(void) {
 static void PBRScheduleHookInstallation(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         PBRInstallRevivalHooks();
-        if (!PBRMenuTapHooked) {
+        BOOL criticalHooksReady = PBRMenuTapHooked && PBROnlineLoadingCancelHooked &&
+                                  PBRFindMatchHooked && PBRCancelHooked;
+        if (!criticalHooksReady) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
                 PBRScheduleHookInstallation();
@@ -488,10 +492,13 @@ static void PBRScheduleHookInstallation(void) {
     });
 }
 
-static void PBRBootstrapHealthBeacon(void) {
+static void PBRHealthBeacon(NSString *probe) {
     NSURL *url = [NSURL URLWithString:@"https://pacybits-revival-trading.onrender.com/healthz"];
     if (!url) return;
-    NSURLSessionDataTask *task = [NSURLSession.sharedSession dataTaskWithURL:url];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    request.HTTPMethod = @"GET";
+    if (probe.length) [request setValue:probe forHTTPHeaderField:@"X-Revival-Probe"];
+    NSURLSessionDataTask *task = [NSURLSession.sharedSession dataTaskWithRequest:request];
     [task resume];
 }
 
@@ -499,7 +506,7 @@ __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
     PBRScheduleHookInstallation();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-        PBRBootstrapHealthBeacon();
+        PBRHealthBeacon(@"bootstrap");
     });
 }
 

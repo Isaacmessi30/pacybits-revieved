@@ -75,3 +75,62 @@ func PBRBeginRandomTradingDirect(_ presenterOpaque: UnsafeMutableRawPointer?) ->
     }
     return true
 }
+
+
+@MainActor
+@objc(PBRAccountManager)
+final class RevivalAccountManager: NSObject {
+    @objc(signInOrSwitchFrom:)
+    static func signInOrSwitch(from presenter: UIViewController) {
+        Task { @MainActor in
+            do {
+                OriginalTradingCoordinator.cancelActiveMatch()
+                let (config, auth) = try authentication()
+                try auth.signOut()
+                _ = try await GoogleBrowserLogin(configuration: config, authentication: auth)
+                    .signIn(presenting: presenter)
+                presentResult(on: presenter, title: "Google Account",
+                              message: "Signed in successfully. Trading will use this Google account.")
+            } catch {
+                presentResult(on: presenter, title: "Google Account",
+                              message: error.localizedDescription)
+            }
+        }
+    }
+
+    @objc(signOutFrom:)
+    static func signOut(from presenter: UIViewController) {
+        Task { @MainActor in
+            do {
+                OriginalTradingCoordinator.cancelActiveMatch()
+                let (_, auth) = try authentication()
+                try auth.signOut()
+                presentResult(on: presenter, title: "Google Account",
+                              message: "Signed out. You can sign in with another Google account at any time.")
+            } catch {
+                presentResult(on: presenter, title: "Google Account",
+                              message: error.localizedDescription)
+            }
+        }
+    }
+
+    private static func authentication() throws -> (FirebaseProjectConfiguration, FirebaseRESTAuthentication) {
+        guard let url = Bundle.main.url(forResource: "RevivalFirebase", withExtension: "plist") else {
+            throw RevivalFailure("Firebase configuration is missing from this build.")
+        }
+        let config = try FirebaseProjectConfiguration.load(plist: Data(contentsOf: url))
+        let auth = try FirebaseRESTAuthentication(
+            apiKey: config.apiKey,
+            store: KeychainFirebaseSessionStore(projectID: config.projectID, bundleID: config.bundleID))
+        return (config, auth)
+    }
+
+    private static func presentResult(on presenter: UIViewController, title: String, message: String) {
+        var owner: UIViewController? = presenter
+        while let presented = owner?.presentedViewController { owner = presented }
+        guard let owner else { return }
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        owner.present(alert, animated: true)
+    }
+}

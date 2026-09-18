@@ -5,7 +5,7 @@ const MAX_COINS = 1_000_000_000;
 const MAX_COPIES = 1_000_000;
 const SAFE_ID = /^[a-zA-Z0-9_-]{1,128}$/;
 const SAFE_SCOPE = /^[a-zA-Z0-9:_-]{1,128}$/;
-const ACTIONS = new Set(['register', 'importLegacyInventory', 'status', 'invite', 'join', 'queue', 'leaveQueue', 'offer', 'ready', 'confirm', 'handshake', 'cancel']);
+const ACTIONS = new Set(['register', 'importLegacyInventory', 'replaceInventory', 'status', 'invite', 'join', 'queue', 'leaveQueue', 'offer', 'ready', 'confirm', 'handshake', 'cancel']);
 
 export class TradeError extends Error {
   constructor(code, status = 400) { super(code); this.code = code; this.status = status; }
@@ -104,6 +104,18 @@ function validOffer(input) {
   return { coins: input.coins, cards,
     ...(input.slots ? { slots: cards.map(card => input.slots[input.cards.indexOf(card)]) } : {}) };
 }
+function validatedInventory(input) {
+  requireValue(plain(input) && Object.keys(input).sort().join(',') === 'cards,coins', 'INVALID_INVENTORY');
+  const { coins, cards } = input;
+  requireValue(integer(coins, 0, MAX_COINS) && plain(cards), 'INVALID_INVENTORY');
+  requireValue(Object.keys(cards).length <= 30000, 'INVENTORY_TOO_LARGE');
+  for (const [card, copies] of Object.entries(cards)) {
+    requireValue(SAFE_ID.test(card) && !['__proto__', 'constructor', 'prototype'].includes(card)
+      && integer(copies, 1, MAX_COPIES), 'INVALID_INVENTORY');
+  }
+  return { coins, cards: structuredClone(cards) };
+}
+
 function owns(a, offer) {
   requireValue(a.coins >= offer.coins, 'INSUFFICIENT_COINS', 409);
   for (const card of offer.cards) {
@@ -163,23 +175,34 @@ function execute(state, key, input, now, id) {
       requireValue(a.inventoryReady === false && a.inventoryImportedAt === undefined,
         'INVENTORY_ALREADY_INITIALIZED', 409);
       requireValue(!a.activeRoom && !state.queue[key], 'ACCOUNT_BUSY', 409);
-      requireValue(plain(input.inventory) && Object.keys(input.inventory).sort().join(',') === 'cards,coins', 'INVALID_INVENTORY');
       requireValue(input.preserveFirstCopy === undefined || typeof input.preserveFirstCopy === 'boolean', 'INVALID_INVENTORY');
-      const { coins, cards } = input.inventory;
-      requireValue(integer(coins, 0, MAX_COINS) && plain(cards), 'INVALID_INVENTORY');
-      requireValue(Object.keys(cards).length <= 30000, 'INVENTORY_TOO_LARGE');
-      for (const [card, copies] of Object.entries(cards)) {
-        requireValue(SAFE_ID.test(card) && !['__proto__', 'constructor', 'prototype'].includes(card)
-          && integer(copies, 1, MAX_COPIES), 'INVALID_INVENTORY');
-      }
-      a.coins = coins;
-      a.cards = structuredClone(cards);
+      const inventory = validatedInventory(input.inventory);
+      a.coins = inventory.coins;
+      a.cards = inventory.cards;
       a.inventoryVersion = 1;
       a.inventoryReady = true;
       a.inventoryImportedAt = now;
       a.inventoryOrigin = 'legacy-client-unverified';
       a.preserveFirstCopy = input.preserveFirstCopy === true;
-      return { inventory: { coins: a.coins, cards: a.cards }, inventoryReady: true, inventoryVersion: 1 };
+      return { inventory: { coins: a.coins, cards: a.cards }, inventoryReady: true,
+        inventoryVersion: 1, inventoryOrigin: a.inventoryOrigin, preserveFirstCopy: a.preserveFirstCopy };
+    }
+    case 'replaceInventory': {
+      requireValue(a.inventoryReady !== false, 'INVENTORY_IMPORT_REQUIRED', 409);
+      requireValue(!a.activeRoom && !state.queue[key], 'ACCOUNT_BUSY', 409);
+      requireValue(integer(input.expectedInventoryVersion, 1, Number.MAX_SAFE_INTEGER)
+        && input.expectedInventoryVersion === (a.inventoryVersion ?? 0), 'STALE_INVENTORY_VERSION', 409);
+      requireValue(input.preserveFirstCopy === true, 'PRESERVE_FIRST_COPY_REQUIRED', 400);
+      const inventory = validatedInventory(input.inventory);
+      a.coins = inventory.coins;
+      a.cards = inventory.cards;
+      a.inventoryVersion = (a.inventoryVersion ?? 0) + 1;
+      a.inventoryReady = true;
+      a.inventoryReplacedAt = now;
+      a.inventoryOrigin = 'device-authoritative-relink';
+      a.preserveFirstCopy = true;
+      return { inventory: { coins: a.coins, cards: a.cards }, inventoryReady: true,
+        inventoryVersion: a.inventoryVersion, inventoryOrigin: a.inventoryOrigin, preserveFirstCopy: true };
     }
     case 'status': {
       const room = input.roomId
@@ -305,6 +328,7 @@ export function transition(current, uid, input, now, newRoomId) {
     requireValue(ACTIONS.has(input.action), 'UNKNOWN_ACTION');
     const fields = {
       register: ['action', 'legacyId'], importLegacyInventory: ['action', 'inventory', 'preserveFirstCopy'],
+      replaceInventory: ['action', 'inventory', 'preserveFirstCopy', 'expectedInventoryVersion'],
       status: ['action', 'roomId'], invite: ['action'], join: ['action', 'roomId'],
       queue: ['action', 'scope', 'targetLegacyId'], leaveQueue: ['action'], cancel: ['action', 'roomId'],
       offer: ['action', 'roomId', 'revision', 'offer'], ready: ['action', 'roomId', 'revision'],

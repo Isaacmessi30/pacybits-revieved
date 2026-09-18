@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: '22'
       - run: npm --prefix backend test
-      - run: node --test backend/integration/http.test.js
+      - run: node --test backend/integration/http.test.js backend/integration/trading-flow.test.js
   ios-client:
     runs-on: macos-15
     timeout-minutes: 20

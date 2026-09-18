@@ -1,6 +1,6 @@
 // All mutations run inside one database transaction; callers supply verified identity.
-export const ROOM_TTL_MS = 5 * 60_000;
-export const QUEUE_TTL_MS = 60_000;
+export const ROOM_TTL_MS = 15 * 60_000;
+export const QUEUE_TTL_MS = 10 * 60_000;
 const MAX_COINS = 1_000_000_000;
 const MAX_COPIES = 1_000_000;
 const SAFE_ID = /^[a-zA-Z0-9_-]{1,128}$/;
@@ -213,6 +213,7 @@ function execute(state, key, input, now, id) {
       const room = input.roomId
         ? roomFor(state, key, input.roomId, now, true)
         : a.activeRoom ? state.rooms[a.activeRoom] : null;
+      if (room?.status === 'open') room.expiresAt = now + ROOM_TTL_MS;
       return { room: room ? view(room, key) : null, queued: Boolean(state.queue[key]),
         inventory: { coins: a.coins, cards: a.cards }, inventoryReady: a.inventoryReady !== false,
         inventoryVersion: a.inventoryVersion ?? 0, inventoryOrigin: a.inventoryOrigin ?? 'server', preserveFirstCopy: a.preserveFirstCopy === true };

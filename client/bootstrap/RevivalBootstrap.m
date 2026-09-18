@@ -132,7 +132,7 @@ static void PBRCaptureWishlistObject(id item,
     if (!item || result.count >= 50 || depth > 5) return;
     if ([item isKindOfClass:NSString.class] || [item isKindOfClass:NSNumber.class]) {
         NSString *identifier = [item isKindOfClass:NSString.class] ? item : [item stringValue];
-        if (identifier.length && ![seen containsObject:identifier] && PBRPlayerForIdentifier(identifier)) {
+        if (identifier.length && ![seen containsObject:identifier]) {
             [seen addObject:identifier];
             [result addObject:identifier];
         }
@@ -147,7 +147,7 @@ static void PBRCaptureWishlistObject(id item,
         return;
     }
     NSString *identifier = PBRPlayerIdentifier(item);
-    if (identifier.length && ![seen containsObject:identifier] && PBRPlayerForIdentifier(identifier)) {
+    if (identifier.length && ![seen containsObject:identifier]) {
         [seen addObject:identifier];
         [result addObject:identifier];
         return;
@@ -169,11 +169,23 @@ static void PBRCaptureWishlist(id raw) {
     if (result.count) PBRHealthBeacon(@"fallback-wishlist");
 }
 
+static void PBRPersistNativeWishlist(id value) {
+    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    SEL save = NSSelectorFromString(@"saveNativeWishlist:");
+    if ([launcher respondsToSelector:save]) {
+        ((void (*)(id, SEL, id))objc_msgSend)(launcher, save, value ?: @[]);
+    }
+}
+
 static void PBRTradingWishlistCardsSetter(id receiver, SEL selector, id cards) {
     if (PBROriginalWishlistCardsSetter) {
         ((void (*)(id, SEL, id))PBROriginalWishlistCardsSetter)(receiver, selector, cards);
     }
     PBRCaptureWishlist(cards);
+    if (cards) {
+        PBRHealthBeacon(@"wishlist-menu-set");
+        PBRPersistNativeWishlist(cards);
+    }
 }
 
 
@@ -237,6 +249,7 @@ static void PBRTradingWishlistDoneTap(id receiver, SEL selector, id gesture) {
 
     if (PBRShouldInterceptTrading()) {
         PBRHealthBeacon(rawWishlist.count ? @"fallback-wishlist-dialog" : @"fallback-wishlist-dialog-empty");
+        PBRPersistNativeWishlist(rawWishlist);
         PBRSubmitNativeSignal(@"tradingDidSetWishlist", rawWishlist);
     }
 }
@@ -737,10 +750,13 @@ void PBRShowBackendPlayerFound(void) {
             id status = [loading valueForKey:@"status"];
             if ([status isKindOfClass:UILabel.class]) {
                 UILabel *label = status;
-                label.text = @"Player found";
-                label.textColor = UIColor.systemYellowColor;
+                label.text = @"Opponent Found. Connecting...";
+                id yellow = nil;
+                @try { yellow = [loading valueForKey:@"yellowColor"]; } @catch (NSException *ignored) {}
+                if ([yellow isKindOfClass:UIColor.class]) label.textColor = yellow;
                 label.alpha = 1.0;
             }
+            @try { [loading setValue:@YES forKey:@"shouldStopAnimation"]; } @catch (NSException *ignored) {}
             [loading setValue:@NO forKey:@"shouldStartGameAfterHide"];
             PBRHealthBeacon(@"player-found-shown");
         } @catch (NSException *exception) {
@@ -816,14 +832,47 @@ static void PBRTradingLeaveTap(id receiver, SEL selector, id gesture) {
         }
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            UIViewController *trade = PBRCurrentOriginalTrading();
-            if (!trade) return;
-            UINavigationController *nav = trade.navigationController;
-            if (nav && nav.topViewController == trade && nav.viewControllers.count > 1) {
-                [nav popViewControllerAnimated:NO];
-            } else if (trade.presentingViewController) {
-                [trade dismissViewControllerAnimated:NO completion:nil];
+            Class menuClass = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
+            UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
+            __block UIViewController *menu = nil;
+
+            UIViewController* (^findMenu)(UIViewController *) = ^UIViewController* (UIViewController *root) {
+                if (!root || !menuClass) return nil;
+                if ([root isKindOfClass:menuClass]) return root;
+                if ([root isKindOfClass:UINavigationController.class]) {
+                    for (UIViewController *vc in ((UINavigationController *)root).viewControllers) {
+                        UIViewController *found = findMenu(vc);
+                        if (found) return found;
+                    }
+                }
+                if ([root isKindOfClass:UITabBarController.class]) {
+                    for (UIViewController *vc in ((UITabBarController *)root).viewControllers) {
+                        UIViewController *found = findMenu(vc);
+                        if (found) return found;
+                    }
+                }
+                for (UIViewController *vc in root.childViewControllers) {
+                    UIViewController *found = findMenu(vc);
+                    if (found) return found;
+                }
+                return nil;
+            };
+
+            menu = findMenu(window.rootViewController);
+            if (menu) {
+                UITabBarController *tabs = menu.tabBarController;
+                UINavigationController *nav = menu.navigationController;
+                if (tabs && nav) tabs.selectedViewController = nav;
+                if (nav) {
+                    [nav popToViewController:menu animated:NO];
+                    PBRHealthBeacon(@"leave-return-trading-menu");
+                    return;
+                }
             }
+
+            UIViewController *trade = PBRCurrentOriginalTrading();
+            if (trade.presentingViewController) [trade dismissViewControllerAnimated:NO completion:nil];
+            PBRHealthBeacon(@"leave-trading-menu-missing");
         });
     });
 }
@@ -1042,6 +1091,38 @@ BOOL PBRStartOriginalNativeMatch(NSString *peerAlias) {
     }
 }
 
+
+void PBRResetOriginalTradeState(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            UIViewController *controller = PBRRawOriginalTrading();
+            if (!controller) return;
+
+            for (NSString *key in @[@"cardsLeft", @"cardsRight"]) {
+                id cards = [controller valueForKey:key];
+                if ([cards isKindOfClass:NSArray.class]) {
+                    for (id slot in (NSArray *)cards) {
+                        @try { [slot setValue:nil forKey:@"card"]; } @catch (NSException *ignored) {}
+                        @try { [[slot valueForKey:@"deleteButton"] setHidden:YES]; } @catch (NSException *ignored) {}
+                        @try { [[slot valueForKey:@"newSign"] setHidden:YES]; } @catch (NSException *ignored) {}
+                    }
+                }
+            }
+            for (NSString *key in @[@"coinsButtonLeft", @"coinsButtonRight"]) {
+                id button = [controller valueForKey:key];
+                id textField = nil;
+                @try { textField = [button valueForKey:@"textField"]; } @catch (NSException *ignored) {}
+                if ([textField respondsToSelector:@selector(setText:)]) [textField setText:@""];
+            }
+            @try { [[controller valueForKey:@"messageLeft"] setText:@""]; } @catch (NSException *ignored) {}
+            @try { [[controller valueForKey:@"messageRight"] setText:@""]; } @catch (NSException *ignored) {}
+            PBRHealthBeacon(@"trade-ui-reset");
+        } @catch (NSException *exception) {
+            PBRHealthBeacon(@"trade-ui-reset-failed");
+        }
+    });
+}
+
 static UIViewController *PBRFindTradingControllerInTree(UIViewController *controller, Class expected) {
     if (!controller || !expected) return nil;
     if ([controller isKindOfClass:expected]) return controller;
@@ -1144,7 +1225,7 @@ static void PBRAppendWishlistCandidate(id item,
 
     if ([item isKindOfClass:NSString.class] || [item isKindOfClass:NSNumber.class]) {
         NSString *identifier = [item isKindOfClass:NSString.class] ? item : [item stringValue];
-        if (identifier.length && ![seen containsObject:identifier] && PBRPlayerForIdentifier(identifier)) {
+        if (identifier.length && ![seen containsObject:identifier]) {
             [seen addObject:identifier];
             [result addObject:identifier];
         }

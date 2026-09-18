@@ -1,7 +1,12 @@
 import Foundation
+import Darwin
 
-@_silgen_name("PBRNativeEventProbe")
-private func PBRNativeEventProbe(_ label: NSString)
+private func probeNativeEvent(_ label: String) {
+    guard let raw = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "PBRNativeEventProbe") else { return }
+    typealias Probe = @convention(c) (NSString) -> Void
+    let function = unsafeBitCast(raw, to: Probe.self)
+    function(label as NSString)
+}
 
 /// The offline arm64 island calls this C entry point on the game's main thread.
 /// The original sender owns the arguments: copy them before scheduling any work.
@@ -21,7 +26,7 @@ func legacyOutbound(_ stringLow: UInt64, _ stringHigh: UInt64,
         UnsafeRawPointer($0).load(as: String.self)
     }
     guard type.hasPrefix("trading") else { return 0 }
-    PBRNativeEventProbe(type as NSString)
+    probeNativeEvent(type)
     let value: Any?
     if let valueAddress {
         value = valueAddress.load(as: Optional<Any>.self)

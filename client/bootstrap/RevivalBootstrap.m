@@ -91,6 +91,8 @@ static IMP PBROriginalTradeAcceptTap = NULL;
 static IMP PBROriginalTradeMakeChangesTap = NULL;
 static IMP PBROriginalTradeCancelAcceptTap = NULL;
 static IMP PBROriginalTradeLeaveTap = NULL;
+static IMP PBROriginalWishlistCardsSetter = NULL;
+static NSMutableArray<NSString *> *PBRCachedWishlistIdentifiers = nil;
 
 static BOOL PBRMenuTapHooked = NO;
 static BOOL PBRCodeViewHooked = NO;
@@ -106,12 +108,67 @@ static BOOL PBRTradeAcceptHooked = NO;
 static BOOL PBRTradeMakeChangesHooked = NO;
 static BOOL PBRTradeCancelAcceptHooked = NO;
 static BOOL PBRTradeLeaveHooked = NO;
+static BOOL PBRWishlistCardsHooked = NO;
 
 static char PBRButtonWiredKey;
 static char PBRGestureControllerKey;
 static char PBRGestureModeKey;
 static char PBRAboutControlsKey;
 static char PBRAboutControllerKey;
+
+NSString *PBRPlayerIdentifier(id player);
+id PBRPlayerForIdentifier(NSString *identifier);
+
+static void PBRCaptureWishlistObject(id item,
+                                     NSMutableArray<NSString *> *result,
+                                     NSMutableSet<NSString *> *seen,
+                                     NSUInteger depth) {
+    if (!item || result.count >= 50 || depth > 5) return;
+    if ([item isKindOfClass:NSString.class] || [item isKindOfClass:NSNumber.class]) {
+        NSString *identifier = [item isKindOfClass:NSString.class] ? item : [item stringValue];
+        if (identifier.length && ![seen containsObject:identifier] && PBRPlayerForIdentifier(identifier)) {
+            [seen addObject:identifier];
+            [result addObject:identifier];
+        }
+        return;
+    }
+    if ([item isKindOfClass:NSArray.class] || [item isKindOfClass:NSSet.class]) {
+        for (id value in item) PBRCaptureWishlistObject(value, result, seen, depth + 1);
+        return;
+    }
+    if ([item isKindOfClass:NSDictionary.class]) {
+        for (id value in [(NSDictionary *)item allValues]) PBRCaptureWishlistObject(value, result, seen, depth + 1);
+        return;
+    }
+    NSString *identifier = PBRPlayerIdentifier(item);
+    if (identifier.length && ![seen containsObject:identifier] && PBRPlayerForIdentifier(identifier)) {
+        [seen addObject:identifier];
+        [result addObject:identifier];
+        return;
+    }
+    for (NSString *key in @[@"player", @"playerObject", @"playerModel", @"cardPlayer",
+                            @"card", @"smallCard", @"object", @"data", @"value"]) {
+        @try {
+            id nested = [item valueForKey:key];
+            if (nested && nested != item) PBRCaptureWishlistObject(nested, result, seen, depth + 1);
+        } @catch (NSException *ignored) {}
+    }
+}
+
+static void PBRCaptureWishlist(id raw) {
+    NSMutableArray<NSString *> *result = [NSMutableArray array];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    PBRCaptureWishlistObject(raw, result, seen, 0);
+    PBRCachedWishlistIdentifiers = result;
+    if (result.count) PBRHealthBeacon(@"fallback-wishlist");
+}
+
+static void PBRTradingWishlistCardsSetter(id receiver, SEL selector, id cards) {
+    if (PBROriginalWishlistCardsSetter) {
+        ((void (*)(id, SEL, id))PBROriginalWishlistCardsSetter)(receiver, selector, cards);
+    }
+    PBRCaptureWishlist(cards);
+}
 
 static BOOL PBRTradingIsArmed(void) {
     return PBRTradingArmedUntil > CACurrentMediaTime();
@@ -668,6 +725,8 @@ static void PBRInstallRevivalHooks(void) {
     Class menu = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
     PBRInstallMethodHookOnce(menu, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
                              (IMP)PBRTradingMenuTapHook, &PBROriginalTradingMenuTap, &PBRMenuTapHooked);
+    PBRInstallMethodHookOnce(menu, NSSelectorFromString(@"setWishlistCards:"),
+                             (IMP)PBRTradingWishlistCardsSetter, &PBROriginalWishlistCardsSetter, &PBRWishlistCardsHooked);
 
     Class code = NSClassFromString(@"_TtC13PACYBITSFUT2017DialogTradingCode");
     if (code && !PBROriginalCodeSearch) {
@@ -729,7 +788,7 @@ static void PBRInstallRevivalHooks(void) {
 static void PBRScheduleHookInstallation(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         PBRInstallRevivalHooks();
-        BOOL criticalHooksReady = PBRMenuTapHooked && PBROnlineLoadingCancelHooked &&
+        BOOL criticalHooksReady = PBRMenuTapHooked && PBRWishlistCardsHooked && PBROnlineLoadingCancelHooked &&
                                   PBRFindMatchHooked && PBRCancelHooked;
         if (!criticalHooksReady) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
@@ -1006,6 +1065,9 @@ static void PBRCollectWishlistIvars(id owner,
 NSArray<NSString *> *PBRCurrentWishlistIdentifiers(void) {
     @try {
         NSMutableArray<NSString *> *result = [NSMutableArray array];
+        if (PBRCachedWishlistIdentifiers.count) {
+            [result addObjectsFromArray:PBRCachedWishlistIdentifiers];
+        }
         NSMutableSet<NSString *> *seen = [NSMutableSet set];
 
         UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];

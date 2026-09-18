@@ -86,7 +86,6 @@ final class RevivalAccountManager: NSObject {
             do {
                 OriginalTradingCoordinator.cancelActiveMatch()
                 let (config, auth) = try authentication()
-                try await auth.signOut()
                 _ = try await GoogleBrowserLogin(configuration: config, authentication: auth)
                     .signIn(presenting: presenter)
                 presentResult(on: presenter, title: "Google Account",

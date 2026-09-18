@@ -14,7 +14,8 @@ final class OriginalTradingScreen {
     private let receive: @convention(thin) (String, [String:Any]) -> Void
 
     init(peerClubName: String, badgeName: String = "pacybits_fc_logo_large.png",
-         existingController: UIViewController? = nil) throws {
+         existingController: UIViewController? = nil,
+         updateProfile: Bool = true) throws {
         guard let header = _dyld_get_image_header(0), header.pointee.magic == MH_MAGIC_64 else {
             throw RevivalFailure("Unsupported game executable.")
         }
@@ -62,7 +63,9 @@ final class OriginalTradingScreen {
             controller = native
         }
         receive = unsafeBitCast(entry, to: (@convention(thin) (String, [String:Any]) -> Void).self)
-        profile.pointee = ["clubName": String(peerClubName.prefix(40)), "badgeName": badgeName]
+        if updateProfile {
+            profile.pointee = ["clubName": String(peerClubName.prefix(40)), "badgeName": badgeName]
+        }
     }
 
     static func attachCurrent(peerClubName: String,
@@ -70,7 +73,8 @@ final class OriginalTradingScreen {
         guard let controller = PBRCurrentOriginalTrading() else { return nil }
         return try OriginalTradingScreen(peerClubName: peerClubName,
                                          badgeName: badgeName,
-                                         existingController: controller)
+                                         existingController: controller,
+                                         updateProfile: false)
     }
 
     static func deliverPretradeSignal(_ signal: TradeSignal) throws {

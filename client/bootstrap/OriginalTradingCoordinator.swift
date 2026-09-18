@@ -55,6 +55,7 @@ final class OriginalTradingCoordinator {
     private var nativeScreenMisses = 0
     private var detachedScreenChecks = 0
     private var lastPeerSignalSeq = 0
+    private var lastPeerWishlistSignature: String?
     private var isBotRoom = false
     private var lastWishlistSignature: String?
     private var lastNativeOfferSignature: String?
@@ -539,6 +540,15 @@ final class OriginalTradingCoordinator {
         let next = try OriginalTradePeerState(room: room)
         let events = try next.events(after: peerState)
         if !events.isEmpty { try screen?.render(events) }
+
+        if let screen {
+            let wishlist = room.peerWishlist
+            let signature = wishlist.joined(separator: "|")
+            if signature != lastPeerWishlistSignature {
+                try screen.renderWishlist(wishlist)
+                lastPeerWishlistSignature = signature
+            }
+        }
 
         for signal in room.peerSignals.sorted(by: { $0.seq < $1.seq })
         where signal.seq > lastPeerSignalSeq {

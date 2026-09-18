@@ -79,17 +79,56 @@ final class LegacyInventoryBridge: OriginalInventoryAccess {
         put = unsafeBitCast(storage.method(for: NSSelectorFromString("setObject:forKey:")), to: (@convention(c) (AnyObject, Selector, NSData, NSString) -> Bool).self)
     }
 
-    private func read(_ key: String) throws -> Any {
-        guard let data = get(valet, NSSelectorFromString("objectForKey:"), key as NSString)?.takeUnretainedValue() as? Data,
-              let value = try NSKeyedUnarchiver.unarchivedObject(ofClasses: [NSDictionary.self, NSString.self, NSNumber.self], from: data) else {
-            throw RevivalFailure("Cannot read the game's saved \(key). No collection was imported.")
+    private func valetValue(_ key: String) throws -> Any? {
+        guard let object = get(valet, NSSelectorFromString("objectForKey:"), key as NSString)?.takeUnretainedValue() else {
+            return nil
+        }
+        guard let data = object as? Data,
+              let value = try NSKeyedUnarchiver.unarchivedObject(
+                ofClasses: [NSDictionary.self, NSString.self, NSNumber.self], from: data) else {
+            throw RevivalFailure("Unexpected collection storage format.")
         }
         return value
     }
-    private func persisted() throws -> TradeInventory {
-        guard let values = try read("myIds") as? [String:Int], let coins = try read("coins") as? Int else {
-            throw RevivalFailure("Unexpected collection storage format.")
+
+    private func defaultsCards() -> [String:Int]? {
+        guard let raw = UserDefaults.standard.dictionary(forKey: "bXlJZHM=") else { return nil }
+        var result: [String:Int] = [:]
+        result.reserveCapacity(raw.count)
+        for (key, value) in raw {
+            guard let number = value as? NSNumber else { return nil }
+            result[key] = number.intValue
         }
+        return result
+    }
+
+    private func defaultsCoins() -> Int? {
+        guard let value = UserDefaults.standard.object(forKey: "Y29pbnM=") as? NSNumber else { return nil }
+        return value.intValue
+    }
+
+    private func persisted() throws -> TradeInventory {
+        let storedCards = try valetValue("myIds") as? [String:Int]
+        let storedCoins = try valetValue("coins") as? Int
+
+        // PACYBITS can have a valid live collection before Valet has written
+        // myIds on a fresh/restored install. Prefer the game's fallback defaults,
+        // then the already-initialized live dictionary. snapshot() still verifies
+        // that the live collection equals the chosen persisted representation.
+        let values = storedCards ?? defaultsCards() ?? cards.pointee
+
+        let coins: Int
+        if let storedCoins {
+            coins = storedCoins
+        } else if let fallback = defaultsCoins() {
+            coins = fallback
+        } else if values.isEmpty && cards.pointee.isEmpty {
+            // A genuinely fresh PACYBITS save starts with no imported collection.
+            coins = 0
+        } else {
+            throw RevivalFailure("Cannot read the game's saved coins. No collection was imported.")
+        }
+
         return try total(values, coins: coins)
     }
     private func total(_ duplicates: [String:Int], coins: Int) throws -> TradeInventory {

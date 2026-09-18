@@ -547,6 +547,10 @@ final class OriginalTradingCoordinator {
         let offer = try nativeOffer()
         let signature = Self.offerSignature(offer)
         guard signature != lastNativeOfferSignature else { return }
+        if offer.coins == 0 && offer.cards.isEmpty && lastNativeOfferSignature == nil {
+            lastNativeOfferSignature = signature
+            return
+        }
         let response = try await session.replaceOffer(offer)
         lastNativeOfferSignature = signature
         try process(response)

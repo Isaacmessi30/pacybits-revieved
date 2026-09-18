@@ -476,13 +476,30 @@ static void PBRInstallRevivalHooks(void) {
                              (IMP)PBRMatchmakerCancel, &PBROriginalMatchmakerCancel, &PBRCancelHooked);
 }
 
-__attribute__((constructor)) static void PBRStartRevivalProbe(void) {
+static void PBRScheduleHookInstallation(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         PBRInstallRevivalHooks();
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{ PBRInstallRevivalHooks(); });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{ PBRInstallRevivalHooks(); });
+        if (!PBRMenuTapHooked) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                PBRScheduleHookInstallation();
+            });
+        }
+    });
+}
+
+static void PBRBootstrapHealthBeacon(void) {
+    NSURL *url = [NSURL URLWithString:@"https://pacybits-revival-trading.onrender.com/healthz"];
+    if (!url) return;
+    NSURLSessionDataTask *task = [NSURLSession.sharedSession dataTaskWithURL:url];
+    [task resume];
+}
+
+__attribute__((constructor)) static void PBRStartRevivalProbe(void) {
+    PBRScheduleHookInstallation();
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        PBRBootstrapHealthBeacon();
     });
 }
 

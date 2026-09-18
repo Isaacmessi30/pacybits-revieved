@@ -392,7 +392,11 @@ export function transition(current, uid, input, now, newRoomId) {
   state.accounts ??= {}; state.rooms ??= {}; state.queue ??= {}; state.legacyIds ??= {};
   for (const [key, a] of Object.entries(state.accounts)) {
     a.cards ??= {};
-    a.wishlist = Array.isArray(a.wishlist) ? a.wishlist.filter(card => typeof card === 'string' && SAFE_ID.test(card)).slice(0, 50) : [];
+    if (Object.hasOwn(a, 'wishlist')) {
+      a.wishlist = Array.isArray(a.wishlist)
+        ? a.wishlist.filter(card => typeof card === 'string' && SAFE_ID.test(card)).slice(0, 50)
+        : [];
+    }
     if (a.legacyId && SAFE_ID.test(a.legacyId) && !state.legacyIds[a.legacyId]) state.legacyIds[a.legacyId] = key;
   }
   for (const room of Object.values(state.rooms)) {

@@ -52,7 +52,6 @@
 // replaces authentication and multiplayer transport with Google/Firebase/Render.
 static CFTimeInterval PBRTradingArmedUntil = 0;
 static IMP PBROriginalTradingMenuTap = NULL;
-static IMP PBROriginalTradingMenuViewDidAppear = NULL;
 static IMP PBROriginalCodeDidMoveToWindow = NULL;
 static IMP PBROriginalChannelsDidMoveToWindow = NULL;
 static IMP PBROriginalFriendsDidMoveToWindow = NULL;
@@ -64,7 +63,6 @@ static IMP PBROriginalMatchForInvite = NULL;
 static IMP PBROriginalMatchmakerCancel = NULL;
 static IMP PBROriginalOnlineLoadingCancel = NULL;
 
-static BOOL PBRMenuViewHooked = NO;
 static BOOL PBRMenuTapHooked = NO;
 static BOOL PBRCodeViewHooked = NO;
 static BOOL PBRChannelsViewHooked = NO;
@@ -160,35 +158,6 @@ static void PBRPrepareGoogle(UIViewController *presenter, void (^completion)(BOO
 }
 
 static NSString *PBRNormalizedCode(id receiver);
-
-static void PBRWireTradingMenu(id receiver) {
-    if (!receiver || !PBROriginalTradingMenuTap) return;
-    for (NSString *getter in @[@"channelsButton", @"friendsButton", @"codeButton", @"randomButton"]) {
-        id value = PBRDynamicValue(receiver, getter);
-        if (![value isKindOfClass:UIView.class]) continue;
-        UIView *button = value;
-        if ([objc_getAssociatedObject(button, &PBRButtonWiredKey) boolValue]) continue;
-        for (UIGestureRecognizer *existing in [button.gestureRecognizers copy]) {
-            if ([existing isKindOfClass:UITapGestureRecognizer.class]) [button removeGestureRecognizer:existing];
-        }
-        button.userInteractionEnabled = YES;
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:[PBRRevivalBootstrap shared]
-                                                                              action:@selector(tradingTileTapped:)];
-        objc_setAssociatedObject(tap, &PBRGestureControllerKey,
-                                 [NSValue valueWithNonretainedObject:receiver],
-                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        NSString *mode = [getter stringByReplacingOccurrencesOfString:@"Button" withString:@""];
-        objc_setAssociatedObject(tap, &PBRGestureModeKey, mode, OBJC_ASSOCIATION_COPY_NONATOMIC);
-        [button addGestureRecognizer:tap];
-        objc_setAssociatedObject(button, &PBRButtonWiredKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-}
-
-static void PBRTradingMenuViewDidAppear(id receiver, SEL selector, BOOL animated) {
-    if (PBROriginalTradingMenuViewDidAppear) {
-        ((void (*)(id, SEL, BOOL))PBROriginalTradingMenuViewDidAppear)(receiver, selector, animated);
-    }
-}
 
 static NSString *PBRTradingModeForGesture(id receiver, UIGestureRecognizer *gesture) {
     UIView *source = gesture.view;
@@ -458,8 +427,6 @@ static void PBRInstallRevivalHooks(void) {
     Class menu = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
     PBRInstallMethodHookOnce(menu, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
                              (IMP)PBRTradingMenuTapHook, &PBROriginalTradingMenuTap, &PBRMenuTapHooked);
-    PBRInstallMethodHookOnce(menu, NSSelectorFromString(@"viewDidAppear:"),
-                             (IMP)PBRTradingMenuViewDidAppear, &PBROriginalTradingMenuViewDidAppear, &PBRMenuViewHooked);
 
     Class code = NSClassFromString(@"_TtC13PACYBITSFUT2017DialogTradingCode");
     if (code && !PBROriginalCodeSearch) {

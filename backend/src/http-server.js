@@ -10,7 +10,10 @@ export function createTradingHTTPServer(trade) {
         'bootstrap', 'random-tap', 'auth-start', 'auth-session-ok',
         'auth-login-start', 'auth-login-ok', 'auth-session-error',
         'register-start', 'register-ok',
-        'bridge-direct-call', 'bridge-direct-failed', 'bridge-direct-return'
+        'bridge-direct-call', 'bridge-direct-failed', 'bridge-direct-return',
+        'native-start', 'native-no-helper', 'native-helper-type-failed',
+        'native-no-selector', 'native-callback', 'native-return', 'native-exception',
+        'screen-found', 'screen-missing'
       ];
       const probe = safeProbes.includes(rawProbe) ? rawProbe : undefined;
       console.log(JSON.stringify({ event: 'http', method: req.method, path, status, ...(probe ? { probe } : {}) }));

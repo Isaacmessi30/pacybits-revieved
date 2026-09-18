@@ -552,19 +552,32 @@ __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
 
 BOOL PBRStartOriginalNativeMatch(NSString *peerAlias) {
     (void)peerAlias;
+    PBRHealthBeacon(@"native-start");
     @try {
         intptr_t slide = _dyld_get_image_vmaddr_slide(0);
         void *raw = *(void **)(uintptr_t)(0x1012be350ULL + slide);
-        if (!raw) return NO;
+        if (!raw) {
+            PBRHealthBeacon(@"native-no-helper");
+            return NO;
+        }
         id helper = (__bridge id)raw;
         Class expected = NSClassFromString(@"_TtC13PACYBITSFUT2016GameCenterHelper");
-        if (!expected || ![helper isKindOfClass:expected]) return NO;
+        if (!expected || ![helper isKindOfClass:expected]) {
+            PBRHealthBeacon(@"native-helper-type-failed");
+            return NO;
+        }
         SEL selector = NSSelectorFromString(@"matchmakerViewController:didFindMatch:");
-        if (![helper respondsToSelector:selector]) return NO;
+        if (![helper respondsToSelector:selector]) {
+            PBRHealthBeacon(@"native-no-selector");
+            return NO;
+        }
         PBRFakeGKMatch *match = [PBRFakeGKMatch new];
+        PBRHealthBeacon(@"native-callback");
         ((void (*)(id, SEL, id, id))objc_msgSend)(helper, selector, nil, match);
+        PBRHealthBeacon(@"native-return");
         return YES;
     } @catch (NSException *exception) {
+        PBRHealthBeacon(@"native-exception");
         return NO;
     }
 }
@@ -573,11 +586,17 @@ UIViewController *PBRCurrentOriginalTrading(void) {
     @try {
         intptr_t slide = _dyld_get_image_vmaddr_slide(0);
         void *raw = *(void **)(uintptr_t)(0x1012bef00ULL + slide);
-        if (!raw) return nil;
+        if (!raw) {
+            PBRHealthBeacon(@"screen-missing");
+            return nil;
+        }
         id controller = (__bridge id)raw;
         Class expected = NSClassFromString(@"_TtC13PACYBITSFUT2021TradingViewController");
-        return expected && [controller isKindOfClass:expected] ? controller : nil;
+        BOOL ok = expected && [controller isKindOfClass:expected];
+        PBRHealthBeacon(ok ? @"screen-found" : @"screen-missing");
+        return ok ? controller : nil;
     } @catch (NSException *exception) {
+        PBRHealthBeacon(@"screen-missing");
         return nil;
     }
 }

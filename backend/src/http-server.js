@@ -74,6 +74,9 @@ export function createTradingHTTPServer(trade) {
         ...(action === 'offer' && Array.isArray(body?.offer?.cards)
           ? { offerCardCount: body.offer.cards.length }
           : {}),
+        ...(action === 'signal' && typeof body?.signalType === 'string'
+          ? { signalType: body.signalType.slice(0, 64) }
+          : {}),
         ...(room ? {
           roomStatus: room.status,
           members: Array.isArray(room.members) ? room.members.length : undefined,

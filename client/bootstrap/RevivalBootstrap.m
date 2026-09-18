@@ -163,6 +163,7 @@ static void PBRPrepareGoogle(UIViewController *presenter, void (^completion)(BOO
 }
 
 static NSString *PBRNormalizedCode(id receiver);
+static void PBRHealthBeacon(NSString *probe);
 
 static NSString *PBRTradingModeForGesture(id receiver, UIGestureRecognizer *gesture) {
     UIView *source = gesture.view;

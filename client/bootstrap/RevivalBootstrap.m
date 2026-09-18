@@ -965,7 +965,7 @@ NSArray<NSString *> *PBRCurrentWishlistIdentifiers(void) {
             if (identifier.length && ![seen containsObject:identifier] && PBRPlayerForIdentifier(identifier)) {
                 [seen addObject:identifier];
                 [result addObject:identifier];
-                if (result.count >= 3) break;
+                if (result.count >= 50) break;
             }
         }
         return result;

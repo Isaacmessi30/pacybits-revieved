@@ -141,12 +141,24 @@ static NSString *PBRInvitedFriendLegacyID(void) {
 }
 
 static BOOL PBRBeginScopeFromPresenter(UIViewController *presenter, NSString *scope, NSString *target) {
-    if (!presenter || !scope.length) return NO;
+    if (!presenter || !scope.length) {
+        PBRHealthBeacon(@"bridge-invalid-input");
+        return NO;
+    }
     Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    if (!launcher) {
+        PBRHealthBeacon(@"bridge-no-launcher");
+        return NO;
+    }
     SEL begin = NSSelectorFromString(@"beginOriginalMatchFrom:scope:targetLegacyID:localLegacyID:");
-    if (![launcher respondsToSelector:begin]) return NO;
+    if (![launcher respondsToSelector:begin]) {
+        PBRHealthBeacon(@"bridge-no-selector");
+        return NO;
+    }
+    PBRHealthBeacon(@"bridge-call");
     ((void (*)(id, SEL, UIViewController *, NSString *, NSString *, NSString *))objc_msgSend)(
         launcher, begin, presenter, scope, target, PBRLocalLegacyID());
+    PBRHealthBeacon(@"bridge-return");
     return YES;
 }
 
@@ -199,7 +211,11 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
 
     UIViewController *presenter = [receiver isKindOfClass:UIViewController.class]
         ? receiver : [[PBRRevivalBootstrap shared] topPresenter];
-    if (!presenter) return;
+    if (!presenter) {
+        PBRHealthBeacon(@"bridge-no-presenter");
+        return;
+    }
+    PBRHealthBeacon(@"bridge-presenter-ok");
 
     PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
     PBRExposeTradingAsConnected();

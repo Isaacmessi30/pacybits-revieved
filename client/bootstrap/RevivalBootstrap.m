@@ -582,23 +582,70 @@ BOOL PBRStartOriginalNativeMatch(NSString *peerAlias) {
     }
 }
 
-UIViewController *PBRCurrentOriginalTrading(void) {
-    @try {
-        intptr_t slide = _dyld_get_image_vmaddr_slide(0);
-        void *raw = *(void **)(uintptr_t)(0x1012bef00ULL + slide);
-        if (!raw) {
-            PBRHealthBeacon(@"screen-missing");
-            return nil;
+static UIViewController *PBRFindTradingControllerInTree(UIViewController *controller, Class expected) {
+    if (!controller || !expected) return nil;
+    if ([controller isKindOfClass:expected]) return controller;
+
+    if ([controller isKindOfClass:UINavigationController.class]) {
+        for (UIViewController *child in ((UINavigationController *)controller).viewControllers.reverseObjectEnumerator) {
+            UIViewController *found = PBRFindTradingControllerInTree(child, expected);
+            if (found) return found;
         }
-        id controller = (__bridge id)raw;
-        Class expected = NSClassFromString(@"_TtC13PACYBITSFUT2021TradingViewController");
-        BOOL ok = expected && [controller isKindOfClass:expected];
-        PBRHealthBeacon(ok ? @"screen-found" : @"screen-missing");
-        return ok ? controller : nil;
-    } @catch (NSException *exception) {
+    }
+    if ([controller isKindOfClass:UITabBarController.class]) {
+        UIViewController *selected = ((UITabBarController *)controller).selectedViewController;
+        UIViewController *found = PBRFindTradingControllerInTree(selected, expected);
+        if (found) return found;
+    }
+    if (controller.presentedViewController) {
+        UIViewController *found = PBRFindTradingControllerInTree(controller.presentedViewController, expected);
+        if (found) return found;
+    }
+    for (UIViewController *child in controller.children) {
+        UIViewController *found = PBRFindTradingControllerInTree(child, expected);
+        if (found) return found;
+    }
+    return nil;
+}
+
+UIViewController *PBRCurrentOriginalTrading(void) {
+    Class expected = NSClassFromString(@"_TtC13PACYBITSFUT2021TradingViewController");
+    if (!expected) {
         PBRHealthBeacon(@"screen-missing");
         return nil;
     }
+
+    @try {
+        intptr_t slide = _dyld_get_image_vmaddr_slide(0);
+        void *raw = *(void **)(uintptr_t)(0x1012bef00ULL + slide);
+        if (raw) {
+            id controller = (__bridge id)raw;
+            if ([controller isKindOfClass:expected]) {
+                PBRHealthBeacon(@"screen-found");
+                return controller;
+            }
+        }
+    } @catch (NSException *exception) {}
+
+    UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
+    UIViewController *found = PBRFindTradingControllerInTree(window.rootViewController, expected);
+    PBRHealthBeacon(found ? @"screen-found" : @"screen-missing");
+    return found;
+}
+
+UIViewController *PBRPresentOriginalTradingFallback(void) {
+    UIViewController *existing = PBRCurrentOriginalTrading();
+    if (existing) return existing;
+
+    UIViewController *controller = PBRInstantiateOriginalTrading();
+    if (!controller) return nil;
+
+    UIViewController *presenter = [[PBRRevivalBootstrap shared] topPresenter];
+    if (!presenter) return nil;
+
+    controller.modalPresentationStyle = UIModalPresentationFullScreen;
+    [presenter presentViewController:controller animated:NO completion:nil];
+    return controller;
 }
 
 NSString *PBRCardLabel(NSString *identifier) {

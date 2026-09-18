@@ -92,9 +92,9 @@ static IMP PBROriginalTradeMakeChangesTap = NULL;
 static IMP PBROriginalTradeCancelAcceptTap = NULL;
 static IMP PBROriginalTradeLeaveTap = NULL;
 static IMP PBROriginalWishlistCardsSetter = NULL;
+static IMP PBROriginalMessageDoneTap = NULL;
+static IMP PBROriginalWishlistDoneTap = NULL;
 static NSMutableArray<NSString *> *PBRCachedWishlistIdentifiers = nil;
-static void (^PBRPendingFindMatchCompletion)(GKMatch *, NSError *) = nil;
-static BOOL PBRUsedNativeFindCompletion = NO;
 
 static BOOL PBRMenuTapHooked = NO;
 static BOOL PBRCodeViewHooked = NO;
@@ -111,6 +111,8 @@ static BOOL PBRTradeMakeChangesHooked = NO;
 static BOOL PBRTradeCancelAcceptHooked = NO;
 static BOOL PBRTradeLeaveHooked = NO;
 static BOOL PBRWishlistCardsHooked = NO;
+static BOOL PBRMessageDoneHooked = NO;
+static BOOL PBRWishlistDoneHooked = NO;
 
 static char PBRButtonWiredKey;
 static char PBRGestureControllerKey;
@@ -171,6 +173,51 @@ static void PBRTradingWishlistCardsSetter(id receiver, SEL selector, id cards) {
         ((void (*)(id, SEL, id))PBROriginalWishlistCardsSetter)(receiver, selector, cards);
     }
     PBRCaptureWishlist(cards);
+}
+
+
+static void PBRSubmitNativeSignal(NSString *type, id value) {
+    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    SEL submit = NSSelectorFromString(@"submitNativeSignal:value:");
+    if (type.length && [launcher respondsToSelector:submit]) {
+        ((void (*)(id, SEL, NSString *, id))objc_msgSend)(launcher, submit, type, value);
+    }
+}
+
+static void PBRTradingMessageDoneTap(id receiver, SEL selector, id gesture) {
+    NSString *message = nil;
+    @try {
+        id field = [receiver valueForKey:@"textField"];
+        if ([field respondsToSelector:@selector(text)]) message = [field text];
+    } @catch (NSException *ignored) {}
+    if (PBROriginalMessageDoneTap) {
+        ((void (*)(id, SEL, id))PBROriginalMessageDoneTap)(receiver, selector, gesture);
+    }
+    NSString *trimmed = [message stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (PBRShouldInterceptTrading() && trimmed.length) {
+        PBRHealthBeacon(@"fallback-message");
+        PBRSubmitNativeSignal(@"tradingDidSetMessage", trimmed);
+    }
+}
+
+static void PBRTradingWishlistDoneTap(id receiver, SEL selector, id gesture) {
+    id rawWishlist = nil;
+    for (NSString *key in @[@"wishlistPlayers", @"wishlistCards", @"wishlist"]) {
+        @try {
+            rawWishlist = [receiver valueForKey:key];
+            if (rawWishlist) break;
+        } @catch (NSException *ignored) {}
+    }
+    if (PBROriginalWishlistDoneTap) {
+        ((void (*)(id, SEL, id))PBROriginalWishlistDoneTap)(receiver, selector, gesture);
+    }
+    if (rawWishlist) {
+        PBRCaptureWishlist(rawWishlist);
+        if (PBRShouldInterceptTrading()) {
+            PBRHealthBeacon(@"fallback-wishlist-dialog");
+            PBRSubmitNativeSignal(@"tradingDidSetWishlist", rawWishlist);
+        }
+    }
 }
 
 static BOOL PBRTradingIsArmed(void) {
@@ -302,13 +349,6 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
     PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
     PBRExposeTradingAsConnected();
 
-    // Capture PACYBITS' Swift Array through its exported getters before the menu
-    // leaves the hierarchy. Swift-backed fields are not reliable via ObjC ivars.
-    for (NSString *key in @[@"wishlistCards", @"wishlistPlayers", @"wishlist"]) {
-        id value = PBRDynamicValue(receiver, key);
-        if (value) PBRCaptureWishlist(value);
-        if (PBRCachedWishlistIdentifiers.count) break;
-    }
 
     // Random must start the real revival coordinator immediately. The
     // coordinator already owns Google/Firebase authentication, so do not gate
@@ -583,10 +623,6 @@ static void PBRFindMatch(id receiver, SEL selector, GKMatchRequest *request, id 
         if (PBROriginalFindMatch) ((void (*)(id, SEL, GKMatchRequest *, id))PBROriginalFindMatch)(receiver, selector, request, completion);
         return;
     }
-    if (completion) {
-        PBRPendingFindMatchCompletion = [completion copy];
-        PBRHealthBeacon(@"native-search-armed");
-    }
     PBRBeginBackendMatch(request);
 }
 
@@ -651,7 +687,6 @@ static void PBRStopRevivalMatch(id loadingView) {
         ((void (*)(id, SEL))objc_msgSend)(launcher, cancel);
     }
     PBRTradingArmedUntil = 0;
-    PBRPendingFindMatchCompletion = nil;
 
     // Keep PACYBITS inside the Trading menu. Its original cancel handler also
     // executes legacy GameKit navigation and can pop the whole screen/app flow.
@@ -683,7 +718,6 @@ static void PBRTradingLeaveTap(id receiver, SEL selector, id gesture) {
         ((void (*)(id, SEL))objc_msgSend)(launcher, cancel);
     }
     PBRTradingArmedUntil = 0;
-    PBRPendingFindMatchCompletion = nil;
 
     __weak id weakDialog = receiver;
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -768,6 +802,14 @@ static void PBRInstallRevivalHooks(void) {
     }
     PBRInstallMethodHookOnce(friends, NSSelectorFromString(@"didMoveToWindow"),
                              (IMP)PBRFriendsDidMoveToWindow, &PBROriginalFriendsDidMoveToWindow, &PBRFriendsViewHooked);
+
+    Class messageDialog = NSClassFromString(@"_TtC13PACYBITSFUT2020DialogTradingMessage");
+    PBRInstallMethodHookOnce(messageDialog, NSSelectorFromString(@"doneTapHandlerWithGesture:"),
+                             (IMP)PBRTradingMessageDoneTap, &PBROriginalMessageDoneTap, &PBRMessageDoneHooked);
+
+    Class wishlistDialog = NSClassFromString(@"_TtC13PACYBITSFUT2021DialogTradingWishlist");
+    PBRInstallMethodHookOnce(wishlistDialog, NSSelectorFromString(@"doneTapHandlerWithGesture:"),
+                             (IMP)PBRTradingWishlistDoneTap, &PBROriginalWishlistDoneTap, &PBRWishlistDoneHooked);
 
     Class confirmButton = NSClassFromString(@"_TtC13PACYBITSFUT2020TradingConfirmButton");
     PBRInstallMethodHookOnce(confirmButton, NSSelectorFromString(@"panDetectedWithSender:"),
@@ -881,7 +923,6 @@ __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
 
 BOOL PBRStartOriginalNativeMatch(NSString *peerAlias) {
     (void)peerAlias;
-    PBRUsedNativeFindCompletion = NO;
     PBRHealthBeacon(@"native-start");
     @try {
         intptr_t slide = _dyld_get_image_vmaddr_slide(0);
@@ -903,19 +944,6 @@ BOOL PBRStartOriginalNativeMatch(NSString *peerAlias) {
         }
         PBRFakeGKMatch *match = [PBRFakeGKMatch new];
 
-        // Prefer PACYBITS' own GameKit completion path. Its search/loading UI
-        // owns the original "Player Found" state and yellow transition.
-        if (PBRPendingFindMatchCompletion) {
-            void (^completion)(GKMatch *, NSError *) = PBRPendingFindMatchCompletion;
-            PBRPendingFindMatchCompletion = nil;
-            PBRUsedNativeFindCompletion = YES;
-            PBRHealthBeacon(@"native-player-found");
-            completion((GKMatch *)match, nil);
-            PBRHealthBeacon(@"native-find-completion-return");
-            return YES;
-        }
-
-        // Fallback for routes that do not use findMatchForRequest: (invite/code).
         PBRHealthBeacon(@"native-callback");
         ((void (*)(id, SEL, id, id))objc_msgSend)(helper, selector, nil, match);
         PBRHealthBeacon(@"native-return");
@@ -924,10 +952,6 @@ BOOL PBRStartOriginalNativeMatch(NSString *peerAlias) {
         PBRHealthBeacon(@"native-exception");
         return NO;
     }
-}
-
-BOOL PBRNativeFindCompletionWasUsed(void) {
-    return PBRUsedNativeFindCompletion;
 }
 
 static UIViewController *PBRFindTradingControllerInTree(UIViewController *controller, Class expected) {
@@ -1160,14 +1184,7 @@ NSArray<NSString *> *PBRCurrentWishlistIdentifiers(void) {
         @try {
             intptr_t slide = _dyld_get_image_vmaddr_slide(0);
             void *raw = *(void **)(uintptr_t)(0x1012be350ULL + slide);
-            if (raw) {
-                id helper = (__bridge id)raw;
-                for (NSString *key in @[@"wishlist", @"wishlistPlayers", @"wishlistCards"]) {
-                    id value = PBRDynamicValue(helper, key);
-                    if (value) PBRAppendWishlistCandidate(value, result, seen, 0);
-                }
-                PBRCollectWishlistIvars(helper, result, seen);
-            }
+            if (raw) PBRCollectWishlistIvars((__bridge id)raw, result, seen);
         } @catch (NSException *ignored) {}
 
         if (result.count) PBRHealthBeacon(@"fallback-wishlist");

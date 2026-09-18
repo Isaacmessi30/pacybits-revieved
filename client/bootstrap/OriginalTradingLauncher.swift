@@ -60,6 +60,11 @@ final class OriginalTradingLauncher: NSObject {
         OriginalTradingCoordinator.cancelActiveMatch()
     }
 
+    @objc(submitNativeSignal:value:)
+    static func submitNativeSignal(_ type: String, value: Any?) {
+        OriginalTradingCoordinator.submitNativeSignal(type: type, value: value)
+    }
+
     @objc(submitNativeFallback:)
     static func submitNativeFallback(_ name: String) {
         OriginalTradingCoordinator.submitNativeFallback(name)

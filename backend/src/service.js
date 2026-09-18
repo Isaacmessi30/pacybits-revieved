@@ -4,7 +4,7 @@ import { transitionWithTestPartner } from './test-partner.js';
 // Shared by Firebase Functions and the standalone Render server.
 export function createTradingService({ auth, database, logError = console.error, testPartnerEnabled = false }) {
   return async function trade({ authorization, body, byteLength }) {
-    const limit = body?.action === 'importLegacyInventory' ? 262144 : 4096;
+    const limit = ['importLegacyInventory', 'replaceInventory'].includes(body?.action) ? 262144 : 4096;
     if (byteLength > limit) return { status: 413, body: { error: 'REQUEST_TOO_LARGE' } };
     const match = /^Bearer ([^\s]+)$/.exec(authorization ?? '');
     if (!match) return { status: 401, body: { error: 'AUTH_REQUIRED' } };

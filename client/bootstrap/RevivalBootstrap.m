@@ -601,7 +601,7 @@ static UIViewController *PBRFindTradingControllerInTree(UIViewController *contro
         UIViewController *found = PBRFindTradingControllerInTree(controller.presentedViewController, expected);
         if (found) return found;
     }
-    for (UIViewController *child in controller.children) {
+    for (UIViewController *child in controller.childViewControllers) {
         UIViewController *found = PBRFindTradingControllerInTree(child, expected);
         if (found) return found;
     }

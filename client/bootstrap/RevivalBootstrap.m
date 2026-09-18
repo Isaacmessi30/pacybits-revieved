@@ -86,7 +86,7 @@ static IMP PBROriginalMatchForInvite = NULL;
 static IMP PBROriginalMatchmakerCancel = NULL;
 static IMP PBROriginalOnlineLoadingCancel = NULL;
 static IMP PBROriginalAboutViewDidAppear = NULL;
-static IMP PBROriginalTradeConfirmTap = NULL;
+static IMP PBROriginalTradeReadyPan = NULL;
 static IMP PBROriginalTradeAcceptTap = NULL;
 static IMP PBROriginalTradeMakeChangesTap = NULL;
 static IMP PBROriginalTradeCancelAcceptTap = NULL;
@@ -101,7 +101,7 @@ static BOOL PBRInviteHooked = NO;
 static BOOL PBRCancelHooked = NO;
 static BOOL PBROnlineLoadingCancelHooked = NO;
 static BOOL PBRAboutViewHooked = NO;
-static BOOL PBRTradeConfirmHooked = NO;
+static BOOL PBRTradeReadyHooked = NO;
 static BOOL PBRTradeAcceptHooked = NO;
 static BOOL PBRTradeMakeChangesHooked = NO;
 static BOOL PBRTradeCancelAcceptHooked = NO;
@@ -535,11 +535,16 @@ static void PBRSubmitNativeFallback(NSString *name) {
     }
 }
 
-static void PBRTradingConfirmTap(id receiver, SEL selector, id gesture) {
-    if (PBROriginalTradeConfirmTap) {
-        ((void (*)(id, SEL, id))PBROriginalTradeConfirmTap)(receiver, selector, gesture);
+static void PBRTradingReadyPan(id receiver, SEL selector, id sender) {
+    BOOL wasConfirmed = NO;
+    @try { wasConfirmed = [[receiver valueForKey:@"isConfirmed"] boolValue]; } @catch (NSException *ignored) {}
+    if (PBROriginalTradeReadyPan) {
+        ((void (*)(id, SEL, id))PBROriginalTradeReadyPan)(receiver, selector, sender);
     }
-    if (PBRShouldInterceptTrading()) PBRSubmitNativeFallback(@"ready");
+    if (!PBRShouldInterceptTrading()) return;
+    BOOL isConfirmed = wasConfirmed;
+    @try { isConfirmed = [[receiver valueForKey:@"isConfirmed"] boolValue]; } @catch (NSException *ignored) {}
+    if (!wasConfirmed && isConfirmed) PBRSubmitNativeFallback(@"ready");
 }
 
 static void PBRTradingAcceptTap(id receiver, SEL selector, id gesture) {
@@ -669,15 +674,15 @@ static void PBRInstallRevivalHooks(void) {
     PBRInstallMethodHookOnce(friends, NSSelectorFromString(@"didMoveToWindow"),
                              (IMP)PBRFriendsDidMoveToWindow, &PBROriginalFriendsDidMoveToWindow, &PBRFriendsViewHooked);
 
-    Class tradingVC = NSClassFromString(@"_TtC13PACYBITSFUT2021TradingViewController");
-    PBRInstallMethodHookOnce(tradingVC, NSSelectorFromString(@"confirmTapHandlerWithGesture:"),
-                             (IMP)PBRTradingConfirmTap, &PBROriginalTradeConfirmTap, &PBRTradeConfirmHooked);
+    Class confirmButton = NSClassFromString(@"_TtC13PACYBITSFUT2020TradingConfirmButton");
+    PBRInstallMethodHookOnce(confirmButton, NSSelectorFromString(@"panDetectedWithSender:"),
+                             (IMP)PBRTradingReadyPan, &PBROriginalTradeReadyPan, &PBRTradeReadyHooked);
+    PBRInstallMethodHookOnce(confirmButton, NSSelectorFromString(@"makeChangesTapHandlerWithGesture:"),
+                             (IMP)PBRTradingMakeChangesTap, &PBROriginalTradeMakeChangesTap, &PBRTradeMakeChangesHooked);
 
     Class completeTrade = NSClassFromString(@"_TtC13PACYBITSFUT2026DialogTradingCompleteTrade");
     PBRInstallMethodHookOnce(completeTrade, NSSelectorFromString(@"acceptTapHandlerWithGesture:"),
                              (IMP)PBRTradingAcceptTap, &PBROriginalTradeAcceptTap, &PBRTradeAcceptHooked);
-    PBRInstallMethodHookOnce(completeTrade, NSSelectorFromString(@"makeChangesTapHandlerWithGesture:"),
-                             (IMP)PBRTradingMakeChangesTap, &PBROriginalTradeMakeChangesTap, &PBRTradeMakeChangesHooked);
     PBRInstallMethodHookOnce(completeTrade, NSSelectorFromString(@"cancelTapHandlerWithGesture:"),
                              (IMP)PBRTradingCancelAcceptTap, &PBROriginalTradeCancelAcceptTap, &PBRTradeCancelAcceptHooked);
 
@@ -907,22 +912,52 @@ UIViewController *PBRPresentOriginalTradingFallback(void) {
 
 NSArray<NSString *> *PBRCurrentWishlistIdentifiers(void) {
     @try {
-        UIViewController *controller = PBRCurrentOriginalTrading();
-        if (!controller) return @[];
-        id source = nil;
-        for (NSString *key in @[@"wishlistPlayers", @"wishlistCards"]) {
-            @try {
-                id value = [controller valueForKey:key];
-                if ([value isKindOfClass:NSArray.class] && [(NSArray *)value count] > 0) {
-                    source = value;
-                    break;
-                }
-            } @catch (NSException *ignored) {}
+        NSMutableArray *candidates = [NSMutableArray array];
+
+        UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
+        UIViewController *root = window.rootViewController;
+        NSMutableArray<UIViewController *> *queue = [NSMutableArray array];
+        if (root) [queue addObject:root];
+        Class menuClass = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
+        while (queue.count) {
+            UIViewController *controller = queue.firstObject;
+            [queue removeObjectAtIndex:0];
+            if (menuClass && [controller isKindOfClass:menuClass]) {
+                @try {
+                    id cards = [controller valueForKey:@"wishlistCards"];
+                    if ([cards isKindOfClass:NSArray.class]) [candidates addObjectsFromArray:cards];
+                } @catch (NSException *ignored) {}
+            }
+            if (controller.presentedViewController) [queue addObject:controller.presentedViewController];
+            [queue addObjectsFromArray:controller.childViewControllers ?: @[]];
+            if ([controller isKindOfClass:UINavigationController.class]) {
+                [queue addObjectsFromArray:((UINavigationController *)controller).viewControllers ?: @[]];
+            } else if ([controller isKindOfClass:UITabBarController.class]) {
+                [queue addObjectsFromArray:((UITabBarController *)controller).viewControllers ?: @[]];
+            }
         }
-        if (![source isKindOfClass:NSArray.class]) return @[];
+
+        // DialogTradingNeeds owns a populated wishlistPlayers array. Search the
+        // attached view hierarchy as a secondary source when that dialog exists.
+        Class needsClass = NSClassFromString(@"_TtC13PACYBITSFUT2018DialogTradingNeeds");
+        NSMutableArray<UIView *> *views = [NSMutableArray array];
+        if (window) [views addObject:window];
+        while (views.count) {
+            UIView *view = views.firstObject;
+            [views removeObjectAtIndex:0];
+            if (needsClass && [view isKindOfClass:needsClass]) {
+                @try {
+                    Ivar ivar = class_getInstanceVariable(needsClass, "wishlistPlayers");
+                    id players = ivar ? object_getIvar(view, ivar) : nil;
+                    if ([players isKindOfClass:NSArray.class]) [candidates addObjectsFromArray:players];
+                } @catch (NSException *ignored) {}
+            }
+            [views addObjectsFromArray:view.subviews ?: @[]];
+        }
+
         NSMutableArray<NSString *> *result = [NSMutableArray array];
         NSMutableSet<NSString *> *seen = [NSMutableSet set];
-        for (id item in (NSArray *)source) {
+        for (id item in candidates) {
             NSString *identifier = nil;
             if ([item isKindOfClass:NSString.class]) identifier = item;
             else if ([item isKindOfClass:NSNumber.class]) identifier = [item stringValue];
@@ -966,6 +1001,17 @@ NSString *PBRPlayerIdentifier(id player) {
                 id value = [player valueForKey:candidate];
                 if ([value isKindOfClass:NSString.class] && [value length] > 0) return value;
                 if ([value isKindOfClass:NSNumber.class]) return [value stringValue];
+            } @catch (NSException *ignored) {}
+        }
+        // Wishlist UI arrays can contain card/view wrappers rather than the
+        // underlying Player model. Resolve one level of known wrappers too.
+        for (NSString *nestedKey in @[@"player", @"playerObject", @"playerModel", @"cardPlayer"]) {
+            @try {
+                id nested = [player valueForKey:nestedKey];
+                if (nested && nested != player) {
+                    NSString *resolved = PBRPlayerIdentifier(nested);
+                    if (resolved.length) return resolved;
+                }
             } @catch (NSException *ignored) {}
         }
         return nil;

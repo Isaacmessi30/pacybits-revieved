@@ -351,3 +351,60 @@ test('inventory relink validates collection and cannot disable first-copy protec
     assert.equal(f.state.accounts[key].coins, 100);
   }
 });
+
+
+test('random matchmaking completes a full two-player trade end to end', () => {
+  const f = fixture();
+  const aKey = accountKey('alice'), bKey = accountKey('bob');
+  f.state.accounts[aKey].inventoryReady = true;
+  f.state.accounts[bKey].inventoryReady = true;
+  f.state.accounts[aKey].inventoryVersion = 1;
+  f.state.accounts[bKey].inventoryVersion = 1;
+  f.state.accounts[aKey].preserveFirstCopy = false;
+  f.state.accounts[bKey].preserveFirstCopy = false;
+
+  const first = f.call('alice', { action: 'queue', scope: 'random' });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.queued, true);
+  f.advance(3001);
+  const second = f.call('bob', { action: 'queue', scope: 'random' });
+  assert.equal(second.status, 200);
+  assert.equal(second.body.room.members.length, 2);
+  const roomId = second.body.room.id;
+
+  const aliceStatus = f.call('alice', { action: 'status' });
+  assert.equal(aliceStatus.body.room.id, roomId);
+  let revision = aliceStatus.body.room.revision;
+
+  let response = f.call('alice', {
+    action: 'offer', roomId, revision,
+    offer: { coins: 25, cards: ['cardA'], slots: [0] }
+  });
+  assert.equal(response.status, 200);
+  revision = response.body.room.revision;
+
+  response = f.call('bob', {
+    action: 'offer', roomId, revision,
+    offer: { coins: 5, cards: ['cardB'], slots: [2] }
+  });
+  assert.equal(response.status, 200);
+  revision = response.body.room.revision;
+
+  for (const uid of ['alice', 'bob']) {
+    response = f.call(uid, { action: 'ready', roomId, revision });
+    assert.equal(response.status, 200);
+  }
+  assert.equal(f.call('alice', { action: 'confirm', roomId, revision }).body.room.status, 'open');
+  assert.equal(f.call('bob', { action: 'confirm', roomId, revision }).body.room.status, 'completed');
+
+  const a = f.call('alice', { action: 'status', roomId }).body;
+  const b = f.call('bob', { action: 'status', roomId }).body;
+  assert.equal(a.room.status, 'completed');
+  assert.equal(b.room.status, 'completed');
+  assert.equal(a.inventoryVersion, 2);
+  assert.equal(b.inventoryVersion, 2);
+  assert.equal(a.inventory.coins, 80);
+  assert.equal(b.inventory.coins, 120);
+  assert.deepEqual(a.inventory.cards, { cardA: 1, cardB: 2 });
+  assert.deepEqual(b.inventory.cards, { cardA: 3 });
+});

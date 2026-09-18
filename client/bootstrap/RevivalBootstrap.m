@@ -806,6 +806,33 @@ static void PBRStopRevivalMatch(id loadingView) {
     }
 }
 
+static UIViewController *PBRFindControllerOfClassInTree(UIViewController *root, Class expected) {
+    if (!root || !expected) return nil;
+    if ([root isKindOfClass:expected]) return root;
+
+    if ([root isKindOfClass:UINavigationController.class]) {
+        for (UIViewController *vc in ((UINavigationController *)root).viewControllers) {
+            UIViewController *found = PBRFindControllerOfClassInTree(vc, expected);
+            if (found) return found;
+        }
+    }
+    if ([root isKindOfClass:UITabBarController.class]) {
+        for (UIViewController *vc in ((UITabBarController *)root).viewControllers) {
+            UIViewController *found = PBRFindControllerOfClassInTree(vc, expected);
+            if (found) return found;
+        }
+    }
+    for (UIViewController *vc in root.childViewControllers) {
+        UIViewController *found = PBRFindControllerOfClassInTree(vc, expected);
+        if (found) return found;
+    }
+    if (root.presentedViewController) {
+        UIViewController *found = PBRFindControllerOfClassInTree(root.presentedViewController, expected);
+        if (found) return found;
+    }
+    return nil;
+}
+
 static void PBRTradingLeaveTap(id receiver, SEL selector, id gesture) {
     if (!PBRShouldInterceptTrading()) {
         if (PBROriginalTradeLeaveTap) {
@@ -837,30 +864,7 @@ static void PBRTradingLeaveTap(id receiver, SEL selector, id gesture) {
             UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
             __block UIViewController *menu = nil;
 
-            __block UIViewController* (^findMenu)(UIViewController *);
-            findMenu = ^UIViewController* (UIViewController *root) {
-                if (!root || !menuClass) return nil;
-                if ([root isKindOfClass:menuClass]) return root;
-                if ([root isKindOfClass:UINavigationController.class]) {
-                    for (UIViewController *vc in ((UINavigationController *)root).viewControllers) {
-                        UIViewController *found = findMenu(vc);
-                        if (found) return found;
-                    }
-                }
-                if ([root isKindOfClass:UITabBarController.class]) {
-                    for (UIViewController *vc in ((UITabBarController *)root).viewControllers) {
-                        UIViewController *found = findMenu(vc);
-                        if (found) return found;
-                    }
-                }
-                for (UIViewController *vc in root.childViewControllers) {
-                    UIViewController *found = findMenu(vc);
-                    if (found) return found;
-                }
-                return nil;
-            };
-
-            menu = findMenu(window.rootViewController);
+            menu = PBRFindControllerOfClassInTree(window.rootViewController, menuClass);
             if (menu) {
                 UITabBarController *tabs = menu.tabBarController;
                 UINavigationController *nav = menu.navigationController;

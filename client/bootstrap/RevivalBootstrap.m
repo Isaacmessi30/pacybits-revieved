@@ -164,6 +164,7 @@ static void PBRPrepareGoogle(UIViewController *presenter, void (^completion)(BOO
 
 static NSString *PBRNormalizedCode(id receiver);
 static void PBRHealthBeacon(NSString *probe);
+extern BOOL PBRBeginRandomTradingDirect(void *presenterOpaque);
 
 static NSString *PBRTradingModeForGesture(id receiver, UIGestureRecognizer *gesture) {
     UIView *source = gesture.view;
@@ -209,8 +210,12 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
     // it behind a second prepare/auth callback that can prevent any network
     // request from ever being made.
     if ([mode isEqualToString:@"random"]) {
-        if (!PBRBeginScopeFromPresenter(presenter, @"g:0:a:0", nil)) {
+        PBRHealthBeacon(@"bridge-direct-call");
+        if (!PBRBeginRandomTradingDirect((__bridge void *)presenter)) {
+            PBRHealthBeacon(@"bridge-direct-failed");
             PBRTradingArmedUntil = 0;
+        } else {
+            PBRHealthBeacon(@"bridge-direct-return");
         }
     }
 

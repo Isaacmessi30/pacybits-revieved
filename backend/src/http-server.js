@@ -9,7 +9,8 @@ export function createTradingHTTPServer(trade) {
       const safeProbes = [
         'bootstrap', 'random-tap', 'auth-start', 'auth-session-ok',
         'auth-login-start', 'auth-login-ok', 'auth-session-error',
-        'register-start', 'register-ok'
+        'register-start', 'register-ok',
+        'bridge-direct-call', 'bridge-direct-failed', 'bridge-direct-return'
       ];
       const probe = safeProbes.includes(rawProbe) ? rawProbe : undefined;
       console.log(JSON.stringify({ event: 'http', method: req.method, path, status, ...(probe ? { probe } : {}) }));

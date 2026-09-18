@@ -10,7 +10,8 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "test:emulator": "node --test integration/*.test.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test-partner": "node scripts/join-test-partner.js"
   },
   "dependencies": {
     "firebase-admin": "^13.0.0",

@@ -25,7 +25,10 @@ func legacyOutbound(_ stringLow: UInt64, _ stringHigh: UInt64,
     let type: String = withUnsafePointer(to: &words) {
         UnsafeRawPointer($0).load(as: String.self)
     }
-    guard type.hasPrefix("trading") else { return 0 }
+    let supportedPresentationEvent = type.hasPrefix("trading")
+        || type == "emote"
+        || type == "new_friend_info"
+    guard supportedPresentationEvent else { return 0 }
     probeNativeEvent(type)
     let value: Any?
     if let valueAddress {

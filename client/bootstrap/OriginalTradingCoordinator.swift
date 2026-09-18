@@ -55,6 +55,7 @@ final class OriginalTradingCoordinator {
     private var nativeScreenMisses = 0
     private var detachedScreenChecks = 0
     private var lastPeerSignalSeq = 0
+    private var isBotRoom = false
     private var closed = false
     private var firebaseUID: String?
 
@@ -261,6 +262,7 @@ final class OriginalTradingCoordinator {
         }
         session = tradeSession
         peerState = try OriginalTradePeerState(room: room)
+        isBotRoom = room.botPartner == true
         installOutboundBridge()
 
         guard PBRStartOriginalNativeMatch("PACYBITS Player") else {
@@ -318,6 +320,12 @@ final class OriginalTradingCoordinator {
     private func submitSignal(type: String, value: Any?) async {
         guard let api, let roomID = peerState?.roomID, !closed else { return }
         do {
+            if isBotRoom && type == "tradingDidSetWishlist" {
+                let ids = Self.wishlistCardIDs(from: value)
+                let botResponse = try await api.setBotWishlist(roomID: roomID, cardIDs: ids)
+                try process(botResponse)
+            }
+
             let box: [String:Any] = value == nil ? ["nil": true] : ["value": value!]
             guard PropertyListSerialization.propertyList(box, isValidFor: .binary) else {
                 throw RevivalFailure("PACYBITS could not encode this trading UI event.")
@@ -329,6 +337,52 @@ final class OriginalTradingCoordinator {
         } catch {
             showError(error)
         }
+    }
+
+    private static func wishlistCardIDs(from value: Any?) -> [String] {
+        var ordered: [String] = []
+        var seen = Set<String>()
+
+        func add(_ raw: String) {
+            let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty, id.count <= 128, !seen.contains(id),
+                  PBRPlayerForIdentifier(id) != nil else { return }
+            seen.insert(id)
+            ordered.append(id)
+        }
+
+        func walk(_ item: Any?) {
+            guard let item, ordered.count < 3 else { return }
+
+            if let string = item as? String {
+                add(string)
+                return
+            }
+            if let number = item as? NSNumber {
+                add(number.stringValue)
+                return
+            }
+            if let array = item as? [Any] {
+                for value in array { walk(value) }
+                return
+            }
+            if let dictionary = item as? [String:Any] {
+                let preferred = ["id", "playerId", "playerID", "cardId", "cardID"]
+                for key in preferred where ordered.count < 3 {
+                    if let value = dictionary[key] { walk(value) }
+                }
+                for (key, value) in dictionary where !preferred.contains(key) && ordered.count < 3 {
+                    walk(value)
+                }
+                return
+            }
+            if let id = PBRPlayerIdentifier(item as AnyObject) {
+                add(id)
+            }
+        }
+
+        walk(value)
+        return ordered
     }
 
     private func submit(_ action: OriginalTradeAction) async {
@@ -441,7 +495,11 @@ final class OriginalTradingCoordinator {
             }
             guard let api else { throw TradingClientError.invalidResponse }
             do {
-                let response = try await api.nativeHandshake(roomID: roomID, payload: encoded)
+                var response = try await api.nativeHandshake(roomID: roomID, payload: encoded)
+                if isBotRoom {
+                    let peerEncoded = try encodeBotPeerHandshake(value)
+                    response = try await api.setBotPeerHandshake(roomID: roomID, payload: peerEncoded)
+                }
                 localHandshakeSent = true
                 try process(response)
             } catch {
@@ -494,6 +552,27 @@ final class OriginalTradingCoordinator {
         }
         let data = try PropertyListSerialization.data(fromPropertyList: dictionary, format: .binary, options: 0)
         guard data.count <= 8_192 else { throw RevivalFailure("The original completion packet is too large.") }
+        return data.base64EncodedString()
+    }
+
+    private func encodeBotPeerHandshake(_ value: Any?) throws -> String {
+        guard let dictionary = value as? [String:Any],
+              Set(dictionary.keys) == Set(["coins", "idsLeft", "idsRight"]),
+              let coins = dictionary["coins"],
+              let idsLeft = dictionary["idsLeft"],
+              let idsRight = dictionary["idsRight"] else {
+            throw RevivalFailure("The original completion packet is invalid.")
+        }
+        let peer: [String:Any] = [
+            "coins": coins,
+            "idsLeft": idsRight,
+            "idsRight": idsLeft
+        ]
+        guard PropertyListSerialization.propertyList(peer, isValidFor: .binary) else {
+            throw RevivalFailure("The bot completion packet is invalid.")
+        }
+        let data = try PropertyListSerialization.data(fromPropertyList: peer, format: .binary, options: 0)
+        guard data.count <= 8_192 else { throw RevivalFailure("The bot completion packet is too large.") }
         return data.base64EncodedString()
     }
 

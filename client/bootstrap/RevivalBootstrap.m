@@ -542,9 +542,13 @@ static void PBRTradingReadyPan(id receiver, SEL selector, id sender) {
         ((void (*)(id, SEL, id))PBROriginalTradeReadyPan)(receiver, selector, sender);
     }
     if (!PBRShouldInterceptTrading()) return;
+    PBRHealthBeacon(@"fallback-ready-pan");
     BOOL isConfirmed = wasConfirmed;
     @try { isConfirmed = [[receiver valueForKey:@"isConfirmed"] boolValue]; } @catch (NSException *ignored) {}
-    if (!wasConfirmed && isConfirmed) PBRSubmitNativeFallback(@"ready");
+    if (!wasConfirmed && isConfirmed) {
+        PBRHealthBeacon(@"fallback-ready");
+        PBRSubmitNativeFallback(@"ready");
+    }
 }
 
 static void PBRTradingAcceptTap(id receiver, SEL selector, id gesture) {
@@ -597,20 +601,35 @@ static void PBRTradingLeaveTap(id receiver, SEL selector, id gesture) {
         return;
     }
 
-    // Do not call PACYBITS' retired GameKit leave routine for revival sessions.
-    // Cancel our authenticated room first, hide the original leave dialog, and
-    // return through the visible controller hierarchy without touching GameKit.
-    PBRStopRevivalMatch(receiver);
-    UIViewController *trade = PBRCurrentOriginalTrading();
-    if (trade.presentedViewController) {
-        [trade dismissViewControllerAnimated:NO completion:nil];
+    // Avoid PACYBITS' retired GameKit disconnect path. Cancel the revival room
+    // first, then let the gesture callback unwind before changing UIKit hierarchy.
+    PBRHealthBeacon(@"fallback-leave");
+    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    SEL cancel = NSSelectorFromString(@"cancelOriginalMatch");
+    if ([launcher respondsToSelector:cancel]) {
+        ((void (*)(id, SEL))objc_msgSend)(launcher, cancel);
     }
-    UINavigationController *nav = trade.navigationController;
-    if (nav && nav.viewControllers.count > 1) {
-        [nav popViewControllerAnimated:NO];
-    } else if (trade.presentingViewController) {
-        [trade dismissViewControllerAnimated:NO completion:nil];
-    }
+    PBRTradingArmedUntil = 0;
+
+    __weak id weakDialog = receiver;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        id dialog = weakDialog;
+        SEL hide = NSSelectorFromString(@"hide");
+        if (dialog && [dialog respondsToSelector:hide]) {
+            ((void (*)(id, SEL))objc_msgSend)(dialog, hide);
+        }
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            UIViewController *trade = PBRCurrentOriginalTrading();
+            if (!trade) return;
+            UINavigationController *nav = trade.navigationController;
+            if (nav && nav.topViewController == trade && nav.viewControllers.count > 1) {
+                [nav popViewControllerAnimated:NO];
+            } else if (trade.presentingViewController) {
+                [trade dismissViewControllerAnimated:NO completion:nil];
+            }
+        });
+    });
 }
 
 static void PBRMatchmakerCancel(id receiver, SEL selector) {
@@ -961,13 +980,28 @@ NSArray<NSString *> *PBRCurrentWishlistIdentifiers(void) {
             NSString *identifier = nil;
             if ([item isKindOfClass:NSString.class]) identifier = item;
             else if ([item isKindOfClass:NSNumber.class]) identifier = [item stringValue];
-            else identifier = PBRPlayerIdentifier(item);
+            else {
+                identifier = PBRPlayerIdentifier(item);
+                if (!identifier.length) {
+                    for (NSString *key in @[@"player", @"card", @"object", @"data"]) {
+                        @try {
+                            id nested = [item valueForKey:key];
+                            if (!nested || nested == item) continue;
+                            if ([nested isKindOfClass:NSString.class]) identifier = nested;
+                            else if ([nested isKindOfClass:NSNumber.class]) identifier = [nested stringValue];
+                            else identifier = PBRPlayerIdentifier(nested);
+                            if (identifier.length) break;
+                        } @catch (NSException *ignored) {}
+                    }
+                }
+            }
             if (identifier.length && ![seen containsObject:identifier] && PBRPlayerForIdentifier(identifier)) {
                 [seen addObject:identifier];
                 [result addObject:identifier];
                 if (result.count >= 50) break;
             }
         }
+        if (result.count) PBRHealthBeacon(@"fallback-wishlist");
         return result;
     } @catch (NSException *exception) {
         return @[];

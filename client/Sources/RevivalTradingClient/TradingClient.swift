@@ -44,12 +44,13 @@ public struct TradeRoom: Codable, Equatable, Sendable {
     public let confirmed: [String: Int]
     public let handshakes: [String: String]?
     public let signals: [String: [TradeSignal]]?
+    public let wishlists: [String: [String]]?
     public let closedAt: Int64?
     public let botPartner: Bool?
     public let testPartner: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, status, expiresAt, revision, members, offers, ready, confirmed, handshakes, signals, closedAt, botPartner, testPartner
+        case id, status, expiresAt, revision, members, offers, ready, confirmed, handshakes, signals, wishlists, closedAt, botPartner, testPartner
         case selfKey = "self"
     }
     public var isCompleted: Bool { status == "completed" }
@@ -60,6 +61,10 @@ public struct TradeRoom: Codable, Equatable, Sendable {
     public var peerSignals: [TradeSignal] {
         guard let peer = members.first(where: { $0 != selfKey }) else { return [] }
         return signals?[peer] ?? []
+    }
+    public var peerWishlist: [String] {
+        guard let peer = members.first(where: { $0 != selfKey }) else { return [] }
+        return wishlists?[peer] ?? []
     }
 }
 

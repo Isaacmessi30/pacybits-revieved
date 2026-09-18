@@ -60,3 +60,18 @@ final class OriginalTradingLauncher: NSObject {
         OriginalTradingCoordinator.cancelActiveMatch()
     }
 }
+
+
+@_cdecl("PBRBeginRandomTradingDirect")
+func PBRBeginRandomTradingDirect(_ presenterOpaque: UnsafeMutableRawPointer?) -> Bool {
+    guard let presenterOpaque else { return false }
+    let presenter = Unmanaged<UIViewController>.fromOpaque(presenterOpaque).takeUnretainedValue()
+    Task { @MainActor in
+        OriginalTradingCoordinator.beginOriginalMatch(
+            from: presenter,
+            scope: "g:0:a:0",
+            targetLegacyID: nil,
+            localLegacyID: nil)
+    }
+    return true
+}

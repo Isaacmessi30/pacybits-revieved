@@ -55,7 +55,7 @@ export function createTradingHTTPServer(trade) {
 
       const safeActions = new Set([
         'register', 'importLegacyInventory', 'replaceInventory', 'status',
-        'queue', 'leaveQueue', 'invite', 'join', 'ready', 'confirm',
+        'queue', 'leaveQueue', 'invite', 'join', 'setWishlist', 'ready', 'confirm',
         'offer', 'cancel', 'signal', 'nativeHandshake', 'botWishlist', 'botPeerHandshake'
       ]);
       const action = safeActions.has(body?.action) ? body.action : 'unknown';
@@ -68,11 +68,20 @@ export function createTradingHTTPServer(trade) {
           ? { scope: String(body.scope).slice(0, 128) }
           : {}),
         ...(typeof result.body?.queued === 'boolean' ? { queued: result.body.queued } : {}),
+        ...(action === 'setWishlist' && Array.isArray(result.body?.wishlist)
+          ? { wishlistCount: result.body.wishlist.length }
+          : {}),
+        ...(action === 'offer' && Array.isArray(body?.offer?.cards)
+          ? { offerCardCount: body.offer.cards.length }
+          : {}),
         ...(room ? {
           roomStatus: room.status,
           members: Array.isArray(room.members) ? room.members.length : undefined,
           testPartner: room.testPartner === true,
-          botPartner: room.botPartner === true
+          botPartner: room.botPartner === true,
+          ...(Array.isArray(room.wishlists?.[room.self])
+            ? { selfWishlistCount: room.wishlists[room.self].length }
+            : {})
         } : {})
       };
       console.log(JSON.stringify(tradingLog));

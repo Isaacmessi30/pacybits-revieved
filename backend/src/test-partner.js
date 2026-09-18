@@ -2,6 +2,12 @@ import { accountKey, transition } from './trading.js';
 
 // An explicit server simulation, never a Firebase user or an authentication bypass.
 // It can only accept zero-value offers, so testing cannot mint or consume inventory.
+const EMPTY_NATIVE_HANDSHAKE = Buffer.from(
+  '<?xml version="1.0" encoding="UTF-8"?>' +
+  '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' +
+  '<plist version="1.0"><dict><key>coins</key><integer>0</integer><key>idsLeft</key><array/>' +
+  '<key>idsRight</key><array/></dict></plist>', 'utf8').toString('base64');
+
 export function transitionWithTestPartner(current, uid, input, now, id, enabled = false) {
   let result = transition(current, uid, input, now, id);
   if (result.status !== 200) return result;
@@ -68,10 +74,14 @@ export function transitionWithTestPartner(current, uid, input, now, id, enabled 
   }
   // Return the real player's view; never leak the simulated player's identity as self.
   const updated = result.state.rooms[roomId];
+  if (updated.status === 'completed') {
+    updated.handshakes ??= {};
+    if (!updated.handshakes[peerKey]) updated.handshakes[peerKey] = EMPTY_NATIVE_HANDSHAKE;
+  }
   result.body.room = {
     ...result.body.room, revision: updated.revision, status: updated.status,
     self: accountKey(uid), members: updated.members, offers: updated.offers,
-    ready: updated.ready, confirmed: updated.confirmed,
+    ready: updated.ready, confirmed: updated.confirmed, handshakes: updated.handshakes ?? {},
     ...(updated.closedAt !== undefined ? { closedAt: updated.closedAt } : {}),
     testPartner: true
   };

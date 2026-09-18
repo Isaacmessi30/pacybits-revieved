@@ -30,7 +30,12 @@ test('test partner joins and completes only an empty exchange without changing b
   const ready = f.call({ action: 'ready', roomId: room.id, revision: room.revision });
   assert.equal(Object.keys(ready.body.room.ready).length, 2);
   const confirm = { action: 'confirm', roomId: room.id, revision: room.revision };
-  assert.equal(f.call(confirm).body.room.status, 'completed');
+  const completed = f.call(confirm);
+  assert.equal(completed.body.room.status, 'completed');
+  assert.ok(completed.body.room.handshakes);
+  const peer = completed.body.room.members.find(member => member !== completed.body.room.self);
+  assert.equal(typeof completed.body.room.handshakes[peer], 'string');
+  assert.ok(completed.body.room.handshakes[peer].length > 0);
   assert.equal(f.call(confirm).body.room.status, 'completed');
   const final = f.state.accounts[accountKey('alice')];
   assert.equal(final.coins, original.coins);

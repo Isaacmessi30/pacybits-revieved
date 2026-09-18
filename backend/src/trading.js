@@ -252,7 +252,16 @@ function execute(state, key, input, now, id) {
         if (peerQueue.targetLegacyId && peerQueue.targetLegacyId !== a.legacyId) continue;
         account(state, peer);
         delete state.queue[key]; delete state.queue[peer];
-        return { room: view(createRoom(state, peer, key, id, now), key), queued: false };
+        const room = createRoom(state, peer, key, id, now);
+        const peerAccount = state.accounts[peer];
+        const currentAccount = state.accounts[key];
+        if (peerAccount?.testPartner === true) room.testPartnerUid = peerAccount.testPartnerUid ?? peerAccount.uid ?? null;
+        if (currentAccount?.testPartner === true) room.testPartnerUid = currentAccount.testPartnerUid ?? currentAccount.uid ?? null;
+        if (!room.testPartnerUid) {
+          if (peerAccount?.testPartnerUid) room.testPartnerUid = peerAccount.testPartnerUid;
+          else if (currentAccount?.testPartnerUid) room.testPartnerUid = currentAccount.testPartnerUid;
+        }
+        return { room: view(room, key), queued: false };
       }
       const old = state.queue[key];
       state.queue[key] = { since: old?.scope === scope && old?.targetLegacyId === target ? old.since : now,

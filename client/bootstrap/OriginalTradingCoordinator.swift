@@ -269,11 +269,12 @@ final class OriginalTradingCoordinator {
             throw RevivalFailure("PACYBITS could not start its original match-found transition.")
         }
 
-        // A real PACYBITS peer sends tradingIntro immediately after matchmaking.
-        // The synthetic backend opponent has no GameKit process, so explicitly
-        // drive the inspected native receiver through that same state transition
-        // before attempting any storyboard fallback.
-        try OriginalTradingScreen.primeTradingIntro(peerClubName: "PACYBITS Player")
+        // Only the legacy synthetic test partner needs a locally injected intro.
+        // A real authenticated bot/peer sends tradingIntro through the backend,
+        // which lets PACYBITS run its normal peer-introduction + wishlist path.
+        if room.testPartner == true {
+            try OriginalTradingScreen.primeTradingIntro(peerClubName: "PACYBITS Player")
+        }
         try OriginalTradingScreen.openOriginalTradingRoute()
 
         try process(initial)

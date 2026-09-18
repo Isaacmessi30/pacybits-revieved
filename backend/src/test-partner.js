@@ -27,11 +27,9 @@ export function transitionWithTestPartner(current, uid, input, now, id, enabled 
     result.state.rooms[id].testPartnerUid = peerUid;
   }
 
-  // Original PACYBITS Code/Channels/Friends UI eventually creates a GameKit
-  // match request. Test 7 forwards its playerGroup/playerAttributes as `scope`.
-  // For live device testing, auto-pair only non-default scoped queues so the
-  // ordinary Random queue is never silently replaced by a simulated player.
-  if (enabled && input.action === 'queue' && input.scope && input.scope !== 'g:0:a:0'
+  // Live device testing can temporarily auto-pair any queue scope, including
+  // Random, when REVIVAL_TEST_PARTNER_ENABLED is explicitly enabled on Render.
+  if (enabled && input.action === 'queue' && input.scope
       && !input.targetLegacyId && !result.body.room) {
     const peerUid = `revival-test-${id}`;
     const peerKey = accountKey(peerUid);

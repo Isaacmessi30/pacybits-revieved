@@ -6,6 +6,8 @@ id _Nullable PBRPlayerForIdentifier(NSString * _Nonnull identifier);
 UIViewController * _Nullable PBRInstantiateOriginalTrading(void);
 
 BOOL PBRStartOriginalNativeMatch(NSString * _Nonnull peerAlias);
+void PBRShowBackendPlayerFound(void);
+void PBRHideBackendMatchLoading(void);
 UIViewController * _Nullable PBRCurrentOriginalTrading(void);
 UIViewController * _Nullable PBRPresentOriginalTradingFallback(void);
 

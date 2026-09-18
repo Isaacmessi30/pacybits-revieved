@@ -8,3 +8,6 @@ UIViewController * _Nullable PBRInstantiateOriginalTrading(void);
 BOOL PBRStartOriginalNativeMatch(NSString * _Nonnull peerAlias);
 UIViewController * _Nullable PBRCurrentOriginalTrading(void);
 UIViewController * _Nullable PBRPresentOriginalTradingFallback(void);
+
+NSArray<NSString *> * _Nonnull PBRCurrentWishlistIdentifiers(void);
+void PBRNativeEventProbe(NSString * _Nonnull label);

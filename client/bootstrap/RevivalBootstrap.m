@@ -1003,6 +1003,17 @@ NSString *PBRPlayerIdentifier(id player) {
                 if ([value isKindOfClass:NSNumber.class]) return [value stringValue];
             } @catch (NSException *ignored) {}
         }
+        // Wishlist UI arrays can contain card/view wrappers rather than the
+        // underlying Player model. Resolve one level of known wrappers too.
+        for (NSString *nestedKey in @[@"player", @"playerObject", @"playerModel", @"cardPlayer"]) {
+            @try {
+                id nested = [player valueForKey:nestedKey];
+                if (nested && nested != player) {
+                    NSString *resolved = PBRPlayerIdentifier(nested);
+                    if (resolved.length) return resolved;
+                }
+            } @catch (NSException *ignored) {}
+        }
         return nil;
     } @catch (NSException *exception) { return nil; }
 }

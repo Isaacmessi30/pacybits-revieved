@@ -62,6 +62,7 @@ static IMP PBROriginalFriendsButton = NULL;
 static IMP PBROriginalFindMatch = NULL;
 static IMP PBROriginalMatchForInvite = NULL;
 static IMP PBROriginalMatchmakerCancel = NULL;
+static IMP PBROriginalOnlineLoadingCancel = NULL;
 
 static BOOL PBRMenuViewHooked = NO;
 static BOOL PBRCodeViewHooked = NO;
@@ -70,6 +71,7 @@ static BOOL PBRFriendsViewHooked = NO;
 static BOOL PBRFindMatchHooked = NO;
 static BOOL PBRInviteHooked = NO;
 static BOOL PBRCancelHooked = NO;
+static BOOL PBROnlineLoadingCancelHooked = NO;
 
 static char PBRButtonWiredKey;
 static char PBRGestureControllerKey;
@@ -77,6 +79,17 @@ static char PBRGestureModeKey;
 
 static BOOL PBRTradingIsArmed(void) {
     return PBRTradingArmedUntil > CACurrentMediaTime();
+}
+
+static BOOL PBRRevivalMatchActive(void) {
+    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    SEL active = NSSelectorFromString(@"isMatchActive");
+    if (![launcher respondsToSelector:active]) return NO;
+    return ((BOOL (*)(id, SEL))objc_msgSend)(launcher, active);
+}
+
+static BOOL PBRShouldInterceptTrading(void) {
+    return PBRTradingIsArmed() || PBRRevivalMatchActive();
 }
 
 static id PBRDynamicValue(id object, NSString *selectorName) {
@@ -188,17 +201,19 @@ static void PBRTradingMenuViewDidAppear(id receiver, SEL selector, BOOL animated
     PBRPrepareGoogle(presenter, ^(BOOL ok) {
         if (!ok) { PBRTradingArmedUntil = 0; return; }
         PBRExposeTradingAsConnected();
-        ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(
-            receiver, NSSelectorFromString(@"buttonTapHandlerWithGesture:"), gesture);
-        // The original PACYBITS random flow depended on a live Game Center
-        // session before it called findMatchForRequest:. In the revival there is
-        // no real GK session, so start the backend queue immediately. Use the
-        // same canonical 0/0 scope as the fallback GameKit hook; beginOriginalMatch
-        // is idempotent while a coordinator is already active.
         NSString *mode = objc_getAssociatedObject(gesture, &PBRGestureModeKey);
+
+        // Start revival matchmaking before PACYBITS enters its legacy GameKit
+        // flow. Some versions never reach findMatchForRequest: once Game Center
+        // has been retired, so waiting until after the original handler can leave
+        // the UI searching forever without ever contacting Render.
         if ([mode isEqualToString:@"random"]) {
             PBRBeginScope(@"g:0:a:0", nil);
         }
+
+        // PACYBITS still owns the visible original menu/search animation.
+        ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(
+            receiver, NSSelectorFromString(@"buttonTapHandlerWithGesture:"), gesture);
     });
 }
 - (void)codeSearchTapped:(UITapGestureRecognizer *)gesture {
@@ -325,7 +340,7 @@ static void PBRBeginBackendMatch(GKMatchRequest *request) {
 }
 
 static void PBRFindMatch(id receiver, SEL selector, GKMatchRequest *request, id completion) {
-    if (!PBRTradingIsArmed() || !request) {
+    if (!PBRShouldInterceptTrading() || !request) {
         if (PBROriginalFindMatch) ((void (*)(id, SEL, GKMatchRequest *, id))PBROriginalFindMatch)(receiver, selector, request, completion);
         return;
     }
@@ -333,27 +348,52 @@ static void PBRFindMatch(id receiver, SEL selector, GKMatchRequest *request, id 
 }
 
 static void PBRMatchForInvite(id receiver, SEL selector, GKInvite *invite, id completion) {
-    if (!PBRTradingIsArmed()) {
+    if (!PBRShouldInterceptTrading()) {
         if (PBROriginalMatchForInvite) ((void (*)(id, SEL, GKInvite *, id))PBROriginalMatchForInvite)(receiver, selector, invite, completion);
         return;
     }
     PBRBeginScope(@"invite", nil);
 }
 
-static void PBRMatchmakerCancel(id receiver, SEL selector) {
-    if (PBRTradingIsArmed()) {
-        Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
-        SEL cancel = NSSelectorFromString(@"cancelOriginalMatch");
-        if ([launcher respondsToSelector:cancel]) ((void (*)(id, SEL))objc_msgSend)(launcher, cancel);
-        PBRTradingArmedUntil = 0;
+static void PBRStopRevivalMatch(id loadingView) {
+    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    SEL cancel = NSSelectorFromString(@"cancelOriginalMatch");
+    if ([launcher respondsToSelector:cancel]) {
+        ((void (*)(id, SEL))objc_msgSend)(launcher, cancel);
+    }
+    PBRTradingArmedUntil = 0;
 
-        UIViewController *top = [[PBRRevivalBootstrap shared] topPresenter];
-        if ([top isKindOfClass:GKMatchmakerViewController.class]) {
-            [top dismissViewControllerAnimated:YES completion:nil];
-        }
+    // Keep PACYBITS inside the Trading menu. Its original cancel handler also
+    // executes legacy GameKit navigation and can pop the whole screen/app flow.
+    SEL hide = NSSelectorFromString(@"hide");
+    if (loadingView && [loadingView respondsToSelector:hide]) {
+        ((void (*)(id, SEL))objc_msgSend)(loadingView, hide);
+    }
+
+    UIViewController *top = [[PBRRevivalBootstrap shared] topPresenter];
+    if ([top isKindOfClass:GKMatchmakerViewController.class]) {
+        [top dismissViewControllerAnimated:YES completion:nil];
+    }
+}
+
+static void PBRMatchmakerCancel(id receiver, SEL selector) {
+    if (PBRShouldInterceptTrading()) {
+        PBRStopRevivalMatch(nil);
         return;
     }
-    if (PBROriginalMatchmakerCancel) ((void (*)(id, SEL))PBROriginalMatchmakerCancel)(receiver, selector);
+    if (PBROriginalMatchmakerCancel) {
+        ((void (*)(id, SEL))PBROriginalMatchmakerCancel)(receiver, selector);
+    }
+}
+
+static void PBROnlineLoadingCancel(id receiver, SEL selector, id gesture) {
+    if (PBRShouldInterceptTrading()) {
+        PBRStopRevivalMatch(receiver);
+        return;
+    }
+    if (PBROriginalOnlineLoadingCancel) {
+        ((void (*)(id, SEL, id))PBROriginalOnlineLoadingCancel)(receiver, selector, gesture);
+    }
 }
 
 static BOOL PBRInstallMethodHookOnce(Class cls, SEL selector, IMP replacement, IMP *original, BOOL *installed) {
@@ -400,6 +440,10 @@ static void PBRInstallRevivalHooks(void) {
     }
     PBRInstallMethodHookOnce(friends, NSSelectorFromString(@"didMoveToWindow"),
                              (IMP)PBRFriendsDidMoveToWindow, &PBROriginalFriendsDidMoveToWindow, &PBRFriendsViewHooked);
+
+    Class onlineLoading = NSClassFromString(@"_TtC13PACYBITSFUT2013OnlineLoading");
+    PBRInstallMethodHookOnce(onlineLoading, NSSelectorFromString(@"cancelTapHandlerWithGesture:"),
+                             (IMP)PBROnlineLoadingCancel, &PBROriginalOnlineLoadingCancel, &PBROnlineLoadingCancelHooked);
 
     Class matchmaker = GKMatchmaker.class;
     PBRInstallMethodHookOnce(matchmaker, NSSelectorFromString(@"findMatchForRequest:withCompletionHandler:"),

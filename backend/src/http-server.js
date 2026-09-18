@@ -69,7 +69,8 @@ export function createTradingHTTPServer(trade) {
         ...(room ? {
           roomStatus: room.status,
           members: Array.isArray(room.members) ? room.members.length : undefined,
-          testPartner: room.testPartner === true
+          testPartner: room.testPartner === true,
+          botPartner: room.botPartner === true
         } : {})
       };
       console.log(JSON.stringify(tradingLog));

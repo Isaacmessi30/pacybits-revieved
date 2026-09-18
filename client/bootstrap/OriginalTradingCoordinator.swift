@@ -105,6 +105,42 @@ final class OriginalTradingCoordinator {
         active?.cleanup(cancelServer: true)
     }
 
+    static func saveNativeWishlist(value: Any?) {
+        let ids = wishlistCardIDs(from: value)
+        guard !ids.isEmpty else {
+            if let current = active, !current.closed {
+                Task { @MainActor in
+                    if let api = current.api {
+                        _ = try? await api.setWishlist(cardIDs: [])
+                        current.lastWishlistSignature = ""
+                    }
+                }
+            }
+            return
+        }
+
+        if let current = active, !current.closed, let api = current.api {
+            Task { @MainActor in
+                _ = try? await api.setWishlist(cardIDs: ids)
+                current.lastWishlistSignature = ids.joined(separator: "|")
+            }
+            return
+        }
+
+        Task { @MainActor in
+            guard let url = Bundle.main.url(forResource: "RevivalFirebase", withExtension: "plist"),
+                  let config = try? FirebaseProjectConfiguration.load(plist: Data(contentsOf: url)),
+                  let auth = try? FirebaseRESTAuthentication(
+                    apiKey: config.apiKey,
+                    store: KeychainFirebaseSessionStore(projectID: config.projectID, bundleID: config.bundleID)),
+                  (try? await auth.session()) != nil,
+                  let client = try? TradingClient(
+                    endpoint: URL(string: "https://pacybits-revival-trading.onrender.com/trading")!,
+                    sessionProvider: { try await auth.session() }) else { return }
+            _ = try? await client.setWishlist(cardIDs: ids)
+        }
+    }
+
     static func submitNativeSignal(type: String, value: Any?) {
         guard let current = active, !current.closed else { return }
         Task { @MainActor in
@@ -303,6 +339,7 @@ final class OriginalTradingCoordinator {
             lastNativeOfferSignature = Self.offerSignature(own)
         }
         installOutboundBridge()
+        PBRResetOriginalTradeState()
 
         // Render/room state is the matchmaking authority. Keep PACYBITS' original
         // searching overlay visible until the server confirms two room members,
@@ -401,8 +438,7 @@ final class OriginalTradingCoordinator {
 
         func add(_ raw: String) {
             let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !id.isEmpty, id.count <= 128, !seen.contains(id),
-                  PBRPlayerForIdentifier(id) != nil else { return }
+            guard !id.isEmpty, id.count <= 128, !seen.contains(id) else { return }
             seen.insert(id)
             ordered.append(id)
         }

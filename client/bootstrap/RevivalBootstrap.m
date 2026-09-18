@@ -124,6 +124,7 @@ NSString *PBRPlayerIdentifier(id player);
 id PBRPlayerForIdentifier(NSString *identifier);
 static void PBRHealthBeacon(NSString *probe);
 static BOOL PBRShouldInterceptTrading(void);
+static UIViewController *PBRRawOriginalTrading(void);
 
 static void PBRCaptureWishlistObject(id item,
                                      NSMutableArray<NSString *> *result,
@@ -836,7 +837,8 @@ static void PBRTradingLeaveTap(id receiver, SEL selector, id gesture) {
             UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
             __block UIViewController *menu = nil;
 
-            UIViewController* (^findMenu)(UIViewController *) = ^UIViewController* (UIViewController *root) {
+            __block UIViewController* (^findMenu)(UIViewController *);
+            findMenu = ^UIViewController* (UIViewController *root) {
                 if (!root || !menuClass) return nil;
                 if ([root isKindOfClass:menuClass]) return root;
                 if ([root isKindOfClass:UINavigationController.class]) {

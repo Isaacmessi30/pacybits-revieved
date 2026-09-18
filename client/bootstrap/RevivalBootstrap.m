@@ -67,6 +67,8 @@
 - (void)codeSearchTapped:(UITapGestureRecognizer *)gesture;
 - (void)channelsSearchTapped:(UITapGestureRecognizer *)gesture;
 - (void)friendsSearchTapped:(UITapGestureRecognizer *)gesture;
+- (void)aboutSignInTapped:(UIButton *)sender;
+- (void)aboutSignOutTapped:(UIButton *)sender;
 @end
 
 // PACYBITS remains responsible for every visible trading screen. This layer only
@@ -83,6 +85,7 @@ static IMP PBROriginalFindMatch = NULL;
 static IMP PBROriginalMatchForInvite = NULL;
 static IMP PBROriginalMatchmakerCancel = NULL;
 static IMP PBROriginalOnlineLoadingCancel = NULL;
+static IMP PBROriginalAboutViewDidAppear = NULL;
 
 static BOOL PBRMenuTapHooked = NO;
 static BOOL PBRCodeViewHooked = NO;
@@ -92,10 +95,13 @@ static BOOL PBRFindMatchHooked = NO;
 static BOOL PBRInviteHooked = NO;
 static BOOL PBRCancelHooked = NO;
 static BOOL PBROnlineLoadingCancelHooked = NO;
+static BOOL PBRAboutViewHooked = NO;
 
 static char PBRButtonWiredKey;
 static char PBRGestureControllerKey;
 static char PBRGestureModeKey;
+static char PBRAboutControlsKey;
+static char PBRAboutControllerKey;
 
 static BOOL PBRTradingIsArmed(void) {
     return PBRTradingArmedUntil > CACurrentMediaTime();
@@ -308,6 +314,24 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
         ? [table indexPathForSelectedRow] : nil;
     if (row) PBRBeginScope([NSString stringWithFormat:@"friends-row:%ld", (long)row.row], nil);
 }
+- (void)aboutSignInTapped:(UIButton *)sender {
+    UIViewController *controller = [objc_getAssociatedObject(sender, &PBRAboutControllerKey) nonretainedObjectValue];
+    UIViewController *presenter = controller ?: [self topPresenter];
+    Class manager = NSClassFromString(@"PBRAccountManager");
+    SEL action = NSSelectorFromString(@"signInOrSwitchFrom:");
+    if (presenter && [manager respondsToSelector:action]) {
+        ((void (*)(id, SEL, UIViewController *))objc_msgSend)(manager, action, presenter);
+    }
+}
+- (void)aboutSignOutTapped:(UIButton *)sender {
+    UIViewController *controller = [objc_getAssociatedObject(sender, &PBRAboutControllerKey) nonretainedObjectValue];
+    UIViewController *presenter = controller ?: [self topPresenter];
+    Class manager = NSClassFromString(@"PBRAccountManager");
+    SEL action = NSSelectorFromString(@"signOutFrom:");
+    if (presenter && [manager respondsToSelector:action]) {
+        ((void (*)(id, SEL, UIViewController *))objc_msgSend)(manager, action, presenter);
+    }
+}
 @end
 
 static void PBRWireActionButton(id receiver, NSString *getter, SEL action) {
@@ -347,6 +371,79 @@ static void PBRFriendsDidMoveToWindow(id receiver, SEL selector) {
         ((void (*)(id, SEL))PBROriginalFriendsDidMoveToWindow)(receiver, selector);
     }
     if ([receiver window]) PBRWireActionButton(receiver, @"button", @selector(friendsSearchTapped:));
+}
+
+static UIButton *PBRAboutButton(NSString *title, SEL action, UIViewController *controller) {
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.translatesAutoresizingMaskIntoConstraints = NO;
+    [button setTitle:title forState:UIControlStateNormal];
+    button.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    button.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.88];
+    [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    button.layer.cornerRadius = 10.0;
+    button.layer.masksToBounds = YES;
+    [button addTarget:[PBRRevivalBootstrap shared] action:action forControlEvents:UIControlEventTouchUpInside];
+    objc_setAssociatedObject(button, &PBRAboutControllerKey,
+                             [NSValue valueWithNonretainedObject:controller],
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return button;
+}
+
+static void PBRInstallAboutControls(UIViewController *controller) {
+    if (!controller || objc_getAssociatedObject(controller, &PBRAboutControlsKey)) return;
+    UIView *root = controller.view;
+    if (!root) return;
+
+    UIVisualEffectView *panel = [[UIVisualEffectView alloc]
+        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+    panel.translatesAutoresizingMaskIntoConstraints = NO;
+    panel.layer.cornerRadius = 14.0;
+    panel.layer.masksToBounds = YES;
+
+    UILabel *label = [UILabel new];
+    label.translatesAutoresizingMaskIntoConstraints = NO;
+    label.text = @"REVIVAL GOOGLE ACCOUNT";
+    label.textColor = [UIColor colorWithWhite:1 alpha:0.72];
+    label.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+    label.textAlignment = NSTextAlignmentCenter;
+
+    UIButton *signIn = PBRAboutButton(@"SIGN IN / SWITCH ACCOUNT", @selector(aboutSignInTapped:), controller);
+    UIButton *signOut = PBRAboutButton(@"SIGN OUT", @selector(aboutSignOutTapped:), controller);
+
+    UIStackView *buttons = [[UIStackView alloc] initWithArrangedSubviews:@[signIn, signOut]];
+    buttons.translatesAutoresizingMaskIntoConstraints = NO;
+    buttons.axis = UILayoutConstraintAxisHorizontal;
+    buttons.spacing = 8;
+    buttons.distribution = UIStackViewDistributionFillEqually;
+
+    [panel.contentView addSubview:label];
+    [panel.contentView addSubview:buttons];
+    [root addSubview:panel];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [panel.leadingAnchor constraintEqualToAnchor:root.safeAreaLayoutGuide.leadingAnchor constant:16],
+        [panel.trailingAnchor constraintEqualToAnchor:root.safeAreaLayoutGuide.trailingAnchor constant:-16],
+        [panel.bottomAnchor constraintEqualToAnchor:root.safeAreaLayoutGuide.bottomAnchor constant:-10],
+        [panel.heightAnchor constraintEqualToConstant:92],
+        [label.topAnchor constraintEqualToAnchor:panel.contentView.topAnchor constant:9],
+        [label.leadingAnchor constraintEqualToAnchor:panel.contentView.leadingAnchor constant:8],
+        [label.trailingAnchor constraintEqualToAnchor:panel.contentView.trailingAnchor constant:-8],
+        [buttons.topAnchor constraintEqualToAnchor:label.bottomAnchor constant:7],
+        [buttons.leadingAnchor constraintEqualToAnchor:panel.contentView.leadingAnchor constant:10],
+        [buttons.trailingAnchor constraintEqualToAnchor:panel.contentView.trailingAnchor constant:-10],
+        [buttons.bottomAnchor constraintEqualToAnchor:panel.contentView.bottomAnchor constant:-10]
+    ]];
+
+    objc_setAssociatedObject(controller, &PBRAboutControlsKey, panel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+static void PBRAboutViewDidAppear(id receiver, SEL selector, BOOL animated) {
+    if (PBROriginalAboutViewDidAppear) {
+        ((void (*)(id, SEL, BOOL))PBROriginalAboutViewDidAppear)(receiver, selector, animated);
+    }
+    if ([receiver isKindOfClass:UIViewController.class]) {
+        PBRInstallAboutControls((UIViewController *)receiver);
+    }
 }
 
 static NSString *PBRNormalizedCode(id receiver) {
@@ -495,6 +592,10 @@ static void PBRInstallRevivalHooks(void) {
     Class onlineLoading = NSClassFromString(@"_TtC13PACYBITSFUT2013OnlineLoading");
     PBRInstallMethodHookOnce(onlineLoading, NSSelectorFromString(@"cancelTapHandlerWithGesture:"),
                              (IMP)PBROnlineLoadingCancel, &PBROriginalOnlineLoadingCancel, &PBROnlineLoadingCancelHooked);
+
+    Class about = NSClassFromString(@"_TtC13PACYBITSFUT2019AboutViewController");
+    PBRInstallMethodHookOnce(about, @selector(viewDidAppear:),
+                             (IMP)PBRAboutViewDidAppear, &PBROriginalAboutViewDidAppear, &PBRAboutViewHooked);
 
     Class matchmaker = GKMatchmaker.class;
     PBRInstallMethodHookOnce(matchmaker, NSSelectorFromString(@"findMatchForRequest:withCompletionHandler:"),

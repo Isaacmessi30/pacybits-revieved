@@ -300,6 +300,7 @@ final class OriginalTradingCoordinator {
         guard PBRStartOriginalNativeMatch("PACYBITS Player") else {
             throw RevivalFailure("PACYBITS could not start its original match-found transition.")
         }
+        let nativeSearchOwnsTransition = PBRNativeFindCompletionWasUsed()
 
         // Only the legacy synthetic test partner needs a locally injected intro.
         // A real authenticated bot/peer sends tradingIntro through the backend,
@@ -307,7 +308,9 @@ final class OriginalTradingCoordinator {
         if room.testPartner == true {
             try OriginalTradingScreen.primeTradingIntro(peerClubName: "PACYBITS Player")
         }
-        try OriginalTradingScreen.openOriginalTradingRoute()
+        if !nativeSearchOwnsTransition {
+            try OriginalTradingScreen.openOriginalTradingRoute()
+        }
 
         try process(initial)
         try attachNativeScreenIfReady()

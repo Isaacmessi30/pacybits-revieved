@@ -272,6 +272,7 @@ final class OriginalTradingCoordinator {
         // drive the inspected native receiver through that same state transition
         // before attempting any storyboard fallback.
         try OriginalTradingScreen.primeTradingIntro(peerClubName: "PACYBITS Player")
+        try OriginalTradingScreen.openOriginalTradingRoute()
 
         try process(initial)
         try attachNativeScreenIfReady()
@@ -382,17 +383,11 @@ final class OriginalTradingCoordinator {
         }
 
         nativeScreenMisses += 1
-        guard nativeScreenMisses >= 2,
-              let controller = PBRPresentOriginalTradingFallback() else {
-            return
-        }
-
-        screen = try OriginalTradingScreen(
-            peerClubName: "PACYBITS Player",
-            existingController: controller,
-            updateProfile: true)
-        nativeScreenMisses = 0
-        detachedScreenChecks = 0
+        // Do not present Trading.storyboard modally here. PACYBITS' own card
+        // picker switches the app's original tab/navigation route to
+        // "duplicates"; a modal trading controller would sit above that route
+        // and leave the empty slot spinning forever.
+        return
     }
 
     private func process(_ response: TradingResponse) throws {

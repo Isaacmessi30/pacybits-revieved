@@ -36,7 +36,28 @@
 }
 - (UIViewController *)topPresenter {
     UIViewController *presenter = [self gameWindow].rootViewController;
-    while (presenter.presentedViewController) presenter = presenter.presentedViewController;
+    for (NSUInteger depth = 0; presenter && depth < 32; depth++) {
+        UIViewController *next = nil;
+
+        UIViewController *presented = presenter.presentedViewController;
+        if (presented && !presented.isBeingDismissed) {
+            next = presented;
+        } else if ([presenter isKindOfClass:UINavigationController.class]) {
+            next = ((UINavigationController *)presenter).visibleViewController;
+        } else if ([presenter isKindOfClass:UITabBarController.class]) {
+            next = ((UITabBarController *)presenter).selectedViewController;
+        } else {
+            for (UIViewController *child in presenter.childViewControllers.reverseObjectEnumerator) {
+                if (child.isViewLoaded && child.view.window != nil) {
+                    next = child;
+                    break;
+                }
+            }
+        }
+
+        if (!next || next == presenter) break;
+        presenter = next;
+    }
     return presenter;
 }
 @end
@@ -656,16 +677,20 @@ UIViewController *PBRPresentOriginalTradingFallback(void) {
     UIViewController *existing = PBRCurrentOriginalTrading();
     if (existing) return existing;
 
-    // PACYBITS often creates/configures the real TradingViewController when its
-    // match-found callback fires but fails to attach it after retired Game Center.
-    // Prefer that exact configured instance over constructing a second one.
-    UIViewController *controller = PBRRawOriginalTrading();
-    if (!controller) controller = PBRInstantiateOriginalTrading();
-    if (!controller) return nil;
-
     UIViewController *presenter = [[PBRRevivalBootstrap shared] topPresenter];
-    if (!presenter) return nil;
-    if (presenter == controller) return controller;
+    if (!presenter || !presenter.isViewLoaded || presenter.view.window == nil) return nil;
+
+    // A PACYBITS match-found callback can leave a configured TradingViewController
+    // detached. Reuse it only when UIKit considers it parentless; presenting an
+    // instance that still belongs to another controller hierarchy is ignored.
+    UIViewController *controller = PBRRawOriginalTrading();
+    if (controller.parentViewController != nil ||
+        controller.presentingViewController != nil ||
+        controller.navigationController != nil) {
+        controller = nil;
+    }
+    if (!controller) controller = PBRInstantiateOriginalTrading();
+    if (!controller || presenter == controller) return controller;
 
     controller.modalPresentationStyle = UIModalPresentationFullScreen;
     [presenter presentViewController:controller animated:NO completion:nil];

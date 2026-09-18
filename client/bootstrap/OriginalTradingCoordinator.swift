@@ -226,25 +226,22 @@ final class OriginalTradingCoordinator {
     }
 
     private func launch(_ initial: TradingResponse) throws {
-        guard let presenter, let client = api, let room = initial.room,
+        guard let client = api, let room = initial.room,
               room.members.count == 2 else { throw TradingClientError.invalidResponse }
         let tradeSession = try OriginalTradeSession(api: client, initial: initial) { [weak self] offer in
             guard let self else { throw TradingClientError.invalidResponse }
             try self.validateOffer(offer)
         }
-        let native = try OriginalTradingScreen(peerClubName: "PACYBITS Player")
         session = tradeSession
-        screen = native
         peerState = try OriginalTradePeerState(room: room)
         installOutboundBridge()
-        native.controller.modalPresentationStyle = .fullScreen
-        if let navigation = presenter.navigationController {
-            navigation.pushViewController(native.controller, animated: false)
-        } else if let navigation = presenter as? UINavigationController {
-            navigation.pushViewController(native.controller, animated: false)
-        } else {
-            presenter.present(native.controller, animated: false)
+
+        guard PBRStartOriginalNativeMatch("PACYBITS Player") else {
+            throw RevivalFailure("PACYBITS could not start its original match-found transition.")
         }
+
+        try process(initial)
+        try attachNativeScreenIfReady()
         pollTask = Task { @MainActor [weak self] in await self?.pollLoop() }
     }
 
@@ -271,7 +268,13 @@ final class OriginalTradingCoordinator {
         }
     }
 
+    private static let pretradeSignalTypes: Set<String> = [
+        "new_friend_info", "tradingIntro"
+    ]
+
     private static let presentationSignalTypes: Set<String> = [
+        "new_friend_info", "tradingIntro",
+        "tradingDidSetMessage", "tradingDidSetFilters", "tradingDidSetWishlist",
         "emote",
         "tradingStartAnimatingOutline", "tradingStopAnimatingOutline",
         "tradingStartAnimatingWishlist", "tradingStopAnimatingWishlist",
@@ -309,15 +312,28 @@ final class OriginalTradingCoordinator {
     private func pollLoop() async {
         while !Task.isCancelled && !closed {
             do {
-                try await Task.sleep(nanoseconds: 1_250_000_000)
-                guard let screen, screen.controller.presentingViewController != nil || screen.controller.view.window != nil else {
-                    cleanup(cancelServer: true); return
+                try await Task.sleep(nanoseconds: 500_000_000)
+                if let screen,
+                   screen.controller.presentingViewController == nil &&
+                   screen.controller.navigationController == nil &&
+                   screen.controller.view.window == nil {
+                    cleanup(cancelServer: true)
+                    return
                 }
                 guard let session else { return }
                 try process(try await session.refresh())
+                try attachNativeScreenIfReady()
             } catch is CancellationError { return }
             catch { showError(error) }
         }
+    }
+
+    private func attachNativeScreenIfReady() throws {
+        guard screen == nil,
+              let native = try OriginalTradingScreen.attachCurrent(peerClubName: "PACYBITS Player") else {
+            return
+        }
+        screen = native
     }
 
     private func process(_ response: TradingResponse) throws {
@@ -328,10 +344,18 @@ final class OriginalTradingCoordinator {
         let next = try OriginalTradePeerState(room: room)
         let events = try next.events(after: peerState)
         if !events.isEmpty { try screen?.render(events) }
-        if let screen {
-            for signal in room.peerSignals.sorted(by: { $0.seq < $1.seq }) where signal.seq > lastPeerSignalSeq {
+
+        for signal in room.peerSignals.sorted(by: { $0.seq < $1.seq })
+        where signal.seq > lastPeerSignalSeq {
+            if let screen {
                 try screen.renderSignal(signal)
                 lastPeerSignalSeq = max(lastPeerSignalSeq, signal.seq)
+            } else if Self.pretradeSignalTypes.contains(signal.type) {
+                try OriginalTradingScreen.deliverPretradeSignal(signal)
+                lastPeerSignalSeq = max(lastPeerSignalSeq, signal.seq)
+                try attachNativeScreenIfReady()
+            } else {
+                break
             }
         }
         peerState = next

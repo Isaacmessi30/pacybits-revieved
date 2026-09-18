@@ -202,22 +202,42 @@ static void PBRTradingMessageDoneTap(id receiver, SEL selector, id gesture) {
 }
 
 static void PBRTradingWishlistDoneTap(id receiver, SEL selector, id gesture) {
-    id rawWishlist = nil;
-    for (NSString *key in @[@"wishlistPlayers", @"wishlistCards", @"wishlist"]) {
-        @try {
-            rawWishlist = [receiver valueForKey:key];
-            if (rawWishlist) break;
-        } @catch (NSException *ignored) {}
-    }
+    NSMutableArray *rawWishlist = [NSMutableArray array];
+    @try {
+        UICollectionView *collection = [receiver valueForKey:@"collectionView"];
+        for (UICollectionViewCell *cell in collection.visibleCells) {
+            id card = nil;
+            @try { card = [cell valueForKey:@"card"]; } @catch (NSException *ignored) {}
+            if (card) [rawWishlist addObject:card];
+        }
+    } @catch (NSException *ignored) {}
+
+    // If the collection has offscreen items, ask its data source for every cell
+    // before the original handler closes the dialog.
+    @try {
+        UICollectionView *collection = [receiver valueForKey:@"collectionView"];
+        NSInteger sections = [collection numberOfSections];
+        for (NSInteger section = 0; section < sections; section++) {
+            NSInteger items = [collection numberOfItemsInSection:section];
+            for (NSInteger item = 0; item < items; item++) {
+                NSIndexPath *indexPath = [NSIndexPath indexPathForItem:item inSection:section];
+                UICollectionViewCell *cell = [collection cellForItemAtIndexPath:indexPath];
+                id card = nil;
+                @try { card = [cell valueForKey:@"card"]; } @catch (NSException *ignored) {}
+                if (card && ![rawWishlist containsObject:card]) [rawWishlist addObject:card];
+            }
+        }
+    } @catch (NSException *ignored) {}
+
+    if (rawWishlist.count) PBRCaptureWishlist(rawWishlist);
+
     if (PBROriginalWishlistDoneTap) {
         ((void (*)(id, SEL, id))PBROriginalWishlistDoneTap)(receiver, selector, gesture);
     }
-    if (rawWishlist) {
-        PBRCaptureWishlist(rawWishlist);
-        if (PBRShouldInterceptTrading()) {
-            PBRHealthBeacon(@"fallback-wishlist-dialog");
-            PBRSubmitNativeSignal(@"tradingDidSetWishlist", rawWishlist);
-        }
+
+    if (PBRShouldInterceptTrading()) {
+        PBRHealthBeacon(rawWishlist.count ? @"fallback-wishlist-dialog" : @"fallback-wishlist-dialog-empty");
+        PBRSubmitNativeSignal(@"tradingDidSetWishlist", rawWishlist);
     }
 }
 
@@ -645,16 +665,22 @@ static void PBRSubmitNativeFallback(NSString *name) {
 }
 
 static void PBRTradingReadyPan(id receiver, SEL selector, id sender) {
-    BOOL wasConfirmed = NO;
-    @try { wasConfirmed = [[receiver valueForKey:@"isConfirmed"] boolValue]; } @catch (NSException *ignored) {}
+    UIGestureRecognizerState state = UIGestureRecognizerStatePossible;
+    CGFloat translationX = 0.0;
+    if ([sender isKindOfClass:UIPanGestureRecognizer.class]) {
+        UIPanGestureRecognizer *pan = sender;
+        state = pan.state;
+        translationX = [pan translationInView:receiver].x;
+    }
+
     if (PBROriginalTradeReadyPan) {
         ((void (*)(id, SEL, id))PBROriginalTradeReadyPan)(receiver, selector, sender);
     }
     if (!PBRShouldInterceptTrading()) return;
     PBRHealthBeacon(@"fallback-ready-pan");
-    BOOL isConfirmed = wasConfirmed;
-    @try { isConfirmed = [[receiver valueForKey:@"isConfirmed"] boolValue]; } @catch (NSException *ignored) {}
-    if (!wasConfirmed && isConfirmed) {
+
+    if (state == UIGestureRecognizerStateEnded && fabs(translationX) >= 30.0) {
+        @try { [receiver setValue:@YES forKey:@"isConfirmed"]; } @catch (NSException *ignored) {}
         PBRHealthBeacon(@"fallback-ready");
         PBRSubmitNativeFallback(@"ready");
     }
@@ -866,11 +892,11 @@ static void PBRInstallRevivalHooks(void) {
                              (IMP)PBRFriendsDidMoveToWindow, &PBROriginalFriendsDidMoveToWindow, &PBRFriendsViewHooked);
 
     Class messageDialog = NSClassFromString(@"_TtC13PACYBITSFUT2020DialogTradingMessage");
-    PBRInstallMethodHookOnce(messageDialog, NSSelectorFromString(@"doneTapHandlerWithGesture:"),
+    PBRInstallMethodHookOnce(messageDialog, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
                              (IMP)PBRTradingMessageDoneTap, &PBROriginalMessageDoneTap, &PBRMessageDoneHooked);
 
     Class wishlistDialog = NSClassFromString(@"_TtC13PACYBITSFUT2021DialogTradingWishlist");
-    PBRInstallMethodHookOnce(wishlistDialog, NSSelectorFromString(@"doneTapHandlerWithGesture:"),
+    PBRInstallMethodHookOnce(wishlistDialog, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
                              (IMP)PBRTradingWishlistDoneTap, &PBROriginalWishlistDoneTap, &PBRWishlistDoneHooked);
 
     Class confirmButton = NSClassFromString(@"_TtC13PACYBITSFUT2020TradingConfirmButton");

@@ -42,13 +42,20 @@ test('test partner joins and completes only an empty exchange without changing b
   assert.deepEqual(final.cards, original.cards);
   assert.equal(final.inventoryVersion, original.inventoryVersion + 1);
 });
-test('test partner rejects card or coin transfers and client-controlled activation', () => {
+test('test partner accepts offers for UI testing but cannot auto-settle a non-empty trade', () => {
   const f = fixture(); f.initialize();
-  const room = f.call({ action: 'invite' }).body.room;
-  for (const offer of [{ coins: 1, cards: [] }, { coins: 0, cards: ['A'] }]) {
-    assert.equal(f.call({ action: 'offer', roomId: room.id, revision: room.revision, offer }).body.error,
-      'TEST_PARTNER_EMPTY_OFFER_ONLY');
-  }
+  let room = f.call({ action: 'invite' }).body.room;
+  let offered = f.call({ action: 'offer', roomId: room.id, revision: room.revision,
+    offer: { coins: 1, cards: ['A'], slots: [0] } });
+  assert.equal(offered.status, 200);
+  room = offered.body.room;
+  const ready = f.call({ action: 'ready', roomId: room.id, revision: room.revision });
+  assert.equal(Object.keys(ready.body.room.ready).length, 2);
+  const confirmed = f.call({ action: 'confirm', roomId: room.id, revision: room.revision });
+  assert.equal(confirmed.body.room.status, 'open');
+  assert.equal(f.state.accounts[accountKey('alice')].coins, 100);
+  assert.deepEqual(f.state.accounts[accountKey('alice')].cards, { A: 2 });
+
   const normal = fixture(false); normal.initialize();
   assert.equal(normal.call({ action: 'invite', testPartner: true }).body.error, 'UNEXPECTED_FIELD');
   assert.equal(normal.call({ action: 'invite' }).body.room.members.length, 1);

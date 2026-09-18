@@ -711,8 +711,13 @@ static void PBRScheduleHookInstallation(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         PBRInstallRevivalHooks();
         BOOL criticalHooksReady = PBRMenuTapHooked && PBROnlineLoadingCancelHooked &&
-                                  PBRFindMatchHooked && PBRCancelHooked;
-        if (!criticalHooksReady) {
+                                  PBRFindMatchHooked && PBRCancelHooked &&
+                                  PBRTradeReadyHooked && PBRTradeMakeChangesHooked &&
+                                  PBRTradeAcceptHooked && PBRTradeCancelAcceptHooked &&
+                                  PBRTradeLeaveHooked;
+        if (criticalHooksReady) {
+            PBRHealthBeacon(@"trade-hooks-ready");
+        } else {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
                 PBRScheduleHookInstallation();

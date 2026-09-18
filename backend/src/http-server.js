@@ -4,6 +4,10 @@ export function createTradingHTTPServer(trade) {
   let active = 0;
   const server = createServer(async (req, res) => {
     const reply = (status, body, extra = {}) => {
+      const path = req.url?.split('?')[0] ?? '';
+      const rawProbe = req.headers['x-revival-probe'];
+      const probe = ['bootstrap', 'random-tap'].includes(rawProbe) ? rawProbe : undefined;
+      console.log(JSON.stringify({ event: 'http', method: req.method, path, status, ...(probe ? { probe } : {}) }));
       res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff', ...extra });
       res.end(JSON.stringify(body));

@@ -357,8 +357,8 @@ final class OriginalTradingCoordinator {
         }
         try OriginalTradingScreen.openOriginalTradingRoute()
 
-        try process(initial)
         try attachNativeScreenIfReady()
+        try process(initial)
         pollTask = Task { @MainActor [weak self] in await self?.pollLoop() }
     }
 
@@ -511,8 +511,8 @@ final class OriginalTradingCoordinator {
                     }
                 }
                 guard let session else { return }
-                try process(try await session.refresh())
                 try attachNativeScreenIfReady()
+                try process(try await session.refresh())
                 try await syncNativeWishlistIfNeeded()
                 try await syncNativeOfferIfNeeded()
             } catch is CancellationError { return }
@@ -543,7 +543,7 @@ final class OriginalTradingCoordinator {
     }
 
     private func syncNativeOfferIfNeeded() async throws {
-        guard screen != nil, let session, !closed else { return }
+        guard let screen, screen.isActive, let session, !closed else { return }
         let offer = try nativeOffer()
         let signature = Self.offerSignature(offer)
         guard signature != lastNativeOfferSignature else { return }
@@ -590,32 +590,41 @@ final class OriginalTradingCoordinator {
             throw RevivalFailure("Your trading partner left the trade.")
         }
         let next = try OriginalTradePeerState(room: room)
-        let events = try next.events(after: peerState)
-        if !events.isEmpty { try screen?.render(events) }
+        let activeScreen = (screen?.isActive == true) ? screen : nil
 
-        if let screen {
+        if let activeScreen {
+            let events = try next.events(after: peerState)
+            if !events.isEmpty { try activeScreen.render(events) }
+
             let wishlist = room.peerWishlist
             let signature = wishlist.joined(separator: "|")
             if signature != lastPeerWishlistSignature {
-                try screen.renderWishlist(wishlist)
+                try activeScreen.renderWishlist(wishlist)
                 lastPeerWishlistSignature = signature
             }
-        }
 
-        for signal in room.peerSignals.sorted(by: { $0.seq < $1.seq })
-        where signal.seq > lastPeerSignalSeq {
-            if let screen {
-                try screen.renderSignal(signal)
+            for signal in room.peerSignals.sorted(by: { $0.seq < $1.seq })
+            where signal.seq > lastPeerSignalSeq {
+                try activeScreen.renderSignal(signal)
                 lastPeerSignalSeq = max(lastPeerSignalSeq, signal.seq)
-            } else if Self.pretradeSignalTypes.contains(signal.type) {
-                try OriginalTradingScreen.deliverPretradeSignal(signal)
-                lastPeerSignalSeq = max(lastPeerSignalSeq, signal.seq)
-                try attachNativeScreenIfReady()
-            } else {
-                break
+            }
+
+            // Only advance peerState after PACYBITS has actually received the
+            // visual actions. If the user is temporarily in Duplicates/card
+            // picker, the events remain pending and render on return.
+            peerState = next
+        } else if screen == nil {
+            for signal in room.peerSignals.sorted(by: { $0.seq < $1.seq })
+            where signal.seq > lastPeerSignalSeq {
+                if Self.pretradeSignalTypes.contains(signal.type) {
+                    try OriginalTradingScreen.deliverPretradeSignal(signal)
+                    lastPeerSignalSeq = max(lastPeerSignalSeq, signal.seq)
+                    try attachNativeScreenIfReady()
+                } else {
+                    break
+                }
             }
         }
-        peerState = next
         if room.isCompleted {
             guard response.inventory != nil, (response.inventoryVersion ?? 0) > 0 else {
                 throw TradingClientError.invalidResponse

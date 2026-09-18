@@ -183,7 +183,7 @@ export class AuthenticatedRandomBot {
           if (error.message !== 'MATCHMAKING_COOLDOWN') throw error;
         }
       }
-      await sleep(800);
+      await sleep(1400);
       return;
     }
 
@@ -191,7 +191,7 @@ export class AuthenticatedRandomBot {
     if (room.status !== 'open') {
       this.introRoom = null;
       this.offeredRoom = null;
-      await sleep(900);
+      await sleep(1400);
       return;
     }
 
@@ -208,7 +208,7 @@ export class AuthenticatedRandomBot {
     const current = status.room ?? room;
     const self = current.self;
     const peer = current.members.find(member => member !== self);
-    if (!peer) { await sleep(500); return; }
+    if (!peer) { await sleep(1400); return; }
 
     const wish = Array.isArray(current.wishlists?.[peer]) ? current.wishlists[peer].slice(0, 3) : [];
     const ownOffer = current.offers?.[self] ?? { coins: 0, cards: [] };
@@ -223,28 +223,26 @@ export class AuthenticatedRandomBot {
         offer: { coins: 0, cards: wish, slots: wish.map((_, i) => i) }
       });
       this.offeredRoom = r.id;
-      await sleep(350);
+      await sleep(900);
       return;
     }
 
-    const fresh = (await this.call({ action: 'status', roomId: current.id })).room;
-    if (fresh.status !== 'open') { await sleep(400); return; }
+    const fresh = current;
+    if (fresh.status !== 'open') { await sleep(1400); return; }
 
     if (fresh.ready?.[peer] === fresh.revision && fresh.ready?.[self] !== fresh.revision) {
       await this.call({ action: 'ready', roomId: fresh.id, revision: fresh.revision });
-      await sleep(300);
+      await sleep(1000);
       return;
     }
 
-    const latest = (await this.call({ action: 'status', roomId: fresh.id })).room;
-    if (latest.status === 'open' &&
-        latest.ready?.[peer] === latest.revision && latest.ready?.[self] === latest.revision &&
-        latest.confirmed?.[peer] === latest.revision && latest.confirmed?.[self] !== latest.revision) {
-      await this.call({ action: 'confirm', roomId: latest.id, revision: latest.revision });
-      await sleep(300);
+    if (fresh.ready?.[peer] === fresh.revision && fresh.ready?.[self] === fresh.revision &&
+        fresh.confirmed?.[peer] === fresh.revision && fresh.confirmed?.[self] !== fresh.revision) {
+      await this.call({ action: 'confirm', roomId: fresh.id, revision: fresh.revision });
+      await sleep(1000);
       return;
     }
 
-    await sleep(500);
+    await sleep(1400);
   }
 }

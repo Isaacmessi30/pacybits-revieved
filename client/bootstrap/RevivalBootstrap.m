@@ -681,6 +681,66 @@ static void PBRTradingCancelAcceptTap(id receiver, SEL selector, id gesture) {
     if (PBRShouldInterceptTrading()) PBRSubmitNativeFallback(@"cancelAcceptance");
 }
 
+
+static UIView *PBRFindViewOfClass(UIView *root, Class cls) {
+    if (!root || !cls) return nil;
+    if ([root isKindOfClass:cls]) return root;
+    for (UIView *child in root.subviews) {
+        UIView *found = PBRFindViewOfClass(child, cls);
+        if (found) return found;
+    }
+    return nil;
+}
+
+static id PBRCurrentOnlineLoading(void) {
+    Class cls = NSClassFromString(@"_TtC13PACYBITSFUT2013OnlineLoading");
+    if (!cls) return nil;
+    UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
+    if (!window) return nil;
+    return PBRFindViewOfClass(window, cls);
+}
+
+void PBRShowBackendPlayerFound(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        id loading = PBRCurrentOnlineLoading();
+        if (!loading) {
+            PBRHealthBeacon(@"player-found-loading-missing");
+            return;
+        }
+        @try {
+            id status = [loading valueForKey:@"status"];
+            if ([status isKindOfClass:UILabel.class]) {
+                UILabel *label = status;
+                label.text = @"Player found";
+                label.textColor = UIColor.systemYellowColor;
+                label.alpha = 1.0;
+            }
+            [loading setValue:@NO forKey:@"shouldStartGameAfterHide"];
+            PBRHealthBeacon(@"player-found-shown");
+        } @catch (NSException *exception) {
+            PBRHealthBeacon(@"player-found-update-failed");
+        }
+    });
+}
+
+void PBRHideBackendMatchLoading(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        id loading = PBRCurrentOnlineLoading();
+        if (!loading) {
+            PBRHealthBeacon(@"player-found-hide-missing");
+            return;
+        }
+        @try { [loading setValue:@NO forKey:@"shouldStartGameAfterHide"]; } @catch (NSException *ignored) {}
+        SEL hide = NSSelectorFromString(@"hide:");
+        if ([loading respondsToSelector:hide]) {
+            ((void (*)(id, SEL, BOOL))objc_msgSend)(loading, hide, YES);
+            PBRHealthBeacon(@"player-found-hidden");
+        } else {
+            PBRHealthBeacon(@"player-found-hide-selector-missing");
+        }
+    });
+}
+
 static void PBRStopRevivalMatch(id loadingView) {
     Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
     SEL cancel = NSSelectorFromString(@"cancelOriginalMatch");
@@ -691,9 +751,10 @@ static void PBRStopRevivalMatch(id loadingView) {
 
     // Keep PACYBITS inside the Trading menu. Its original cancel handler also
     // executes legacy GameKit navigation and can pop the whole screen/app flow.
-    SEL hide = NSSelectorFromString(@"hide");
+    SEL hide = NSSelectorFromString(@"hide:");
     if (loadingView && [loadingView respondsToSelector:hide]) {
-        ((void (*)(id, SEL))objc_msgSend)(loadingView, hide);
+        @try { [loadingView setValue:@NO forKey:@"shouldStartGameAfterHide"]; } @catch (NSException *ignored) {}
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(loadingView, hide, YES);
     }
 
     UIViewController *top = [[PBRRevivalBootstrap shared] topPresenter];
@@ -723,9 +784,9 @@ static void PBRTradingLeaveTap(id receiver, SEL selector, id gesture) {
     __weak id weakDialog = receiver;
     dispatch_async(dispatch_get_main_queue(), ^{
         id dialog = weakDialog;
-        SEL hide = NSSelectorFromString(@"hide");
+        SEL hide = NSSelectorFromString(@"hide:");
         if (dialog && [dialog respondsToSelector:hide]) {
-            ((void (*)(id, SEL))objc_msgSend)(dialog, hide);
+            ((void (*)(id, SEL, BOOL))objc_msgSend)(dialog, hide, YES);
         }
 
         dispatch_async(dispatch_get_main_queue(), ^{

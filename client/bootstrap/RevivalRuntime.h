@@ -8,6 +8,7 @@ UIViewController * _Nullable PBRInstantiateOriginalTrading(void);
 BOOL PBRStartOriginalNativeMatch(NSString * _Nonnull peerAlias);
 void PBRShowBackendPlayerFound(void);
 void PBRHideBackendMatchLoading(void);
+void PBRResetOriginalTradeState(void);
 UIViewController * _Nullable PBRCurrentOriginalTrading(void);
 UIViewController * _Nullable PBRPresentOriginalTradingFallback(void);
 

@@ -52,6 +52,7 @@ final class OriginalTradingCoordinator {
     private var matchmakingTask: Task<Void, Never>?
     private var localHandshakeSent = false
     private var nativeSettlementStarted = false
+    private var nativeScreenMisses = 0
     private var lastPeerSignalSeq = 0
     private var closed = false
     private var firebaseUID: String?
@@ -354,11 +355,25 @@ final class OriginalTradingCoordinator {
     }
 
     private func attachNativeScreenIfReady() throws {
-        guard screen == nil,
-              let native = try OriginalTradingScreen.attachCurrent(peerClubName: "PACYBITS Player") else {
+        guard screen == nil else { return }
+
+        if let native = try OriginalTradingScreen.attachCurrent(peerClubName: "PACYBITS Player") {
+            screen = native
+            nativeScreenMisses = 0
             return
         }
-        screen = native
+
+        nativeScreenMisses += 1
+        guard nativeScreenMisses >= 2,
+              let controller = PBRPresentOriginalTradingFallback() else {
+            return
+        }
+
+        screen = try OriginalTradingScreen(
+            peerClubName: "PACYBITS Player",
+            existingController: controller,
+            updateProfile: true)
+        nativeScreenMisses = 0
     }
 
     private func process(_ response: TradingResponse) throws {

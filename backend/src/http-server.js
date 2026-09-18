@@ -54,7 +54,7 @@ export function createTradingHTTPServer(trade) {
       const safeActions = new Set([
         'register', 'importLegacyInventory', 'replaceInventory', 'status',
         'queue', 'leaveQueue', 'invite', 'join', 'ready', 'confirm',
-        'offer', 'cancel', 'signal', 'nativeHandshake'
+        'offer', 'cancel', 'signal', 'nativeHandshake', 'botWishlist', 'botPeerHandshake'
       ]);
       const action = safeActions.has(body?.action) ? body.action : 'unknown';
       const room = result.body?.room;

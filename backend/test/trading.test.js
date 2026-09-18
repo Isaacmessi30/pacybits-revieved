@@ -408,3 +408,27 @@ test('random matchmaking completes a full two-player trade end to end', () => {
   assert.deepEqual(a.inventory.cards, { cardA: 1, cardB: 2 });
   assert.deepEqual(b.inventory.cards, { cardA: 3 });
 });
+
+
+test('presentation signals relay without changing trade revision or inventory', () => {
+  const f = fixture(), id = pair(f);
+  const before = structuredClone(f.state.accounts[accountKey('alice')]);
+  const revision = f.state.rooms[id].revision;
+  const payload = Buffer.from('signal').toString('base64');
+  const sent = f.call('alice', { action: 'signal', roomId: id,
+    signalType: 'emote', signalPayload: payload });
+  assert.equal(sent.status, 200);
+  assert.equal(sent.body.room.revision, revision);
+  const aliceKey = accountKey('alice');
+  assert.equal(sent.body.room.signals[aliceKey].length, 1);
+  assert.equal(sent.body.room.signals[aliceKey][0].type, 'emote');
+  assert.equal(f.state.accounts[aliceKey].coins, before.coins);
+  assert.deepEqual(f.state.accounts[aliceKey].cards, before.cards);
+});
+
+test('presentation signal whitelist rejects arbitrary message types', () => {
+  const f = fixture(), id = pair(f);
+  const result = f.call('alice', { action: 'signal', roomId: id,
+    signalType: 'anythingElse', signalPayload: Buffer.from('x').toString('base64') });
+  assert.equal(result.body.error, 'INVALID_SIGNAL_TYPE');
+});

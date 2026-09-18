@@ -52,3 +52,28 @@ test('legacy friend targets only match the intended reciprocal PACYBITS friend',
   assert.deepEqual(new Set(match.body.room.members), new Set([accountKey('alice'), accountKey('bob')]));
   assert.ok(f.state.queue[accountKey('charlie')]);
 });
+
+
+test('use-a-code only pairs players using the exact same code', () => {
+  const f = fixture();
+  assert.equal(f.call('alice', { action: 'queue', scope: 'code:ABC123' }).body.queued, true);
+  assert.equal(f.call('bob', { action: 'queue', scope: 'code:XYZ999' }).body.queued, true);
+  const match = f.call('charlie', { action: 'queue', scope: 'code:ABC123' });
+  assert.equal(match.status, 200);
+  assert.equal(match.body.queued, false);
+  assert.deepEqual(new Set(match.body.room.members),
+    new Set([accountKey('alice'), accountKey('charlie')]));
+  assert.ok(f.state.queue[accountKey('bob')]);
+});
+
+test('channel matchmaking only pairs players in the same channel scope', () => {
+  const f = fixture();
+  assert.equal(f.call('alice', { action: 'queue', scope: 'channel:0:4' }).body.queued, true);
+  assert.equal(f.call('bob', { action: 'queue', scope: 'channel:0:7' }).body.queued, true);
+  const match = f.call('charlie', { action: 'queue', scope: 'channel:0:4' });
+  assert.equal(match.status, 200);
+  assert.equal(match.body.queued, false);
+  assert.deepEqual(new Set(match.body.room.members),
+    new Set([accountKey('alice'), accountKey('charlie')]));
+  assert.ok(f.state.queue[accountKey('bob')]);
+});

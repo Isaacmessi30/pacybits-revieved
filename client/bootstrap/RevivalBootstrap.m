@@ -281,9 +281,13 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
     id receiver = [objc_getAssociatedObject(gesture, &PBRGestureControllerKey) nonretainedObjectValue];
     if (!receiver || !PBROriginalCodeSearch) return;
     NSString *code = PBRNormalizedCode(receiver);
+    if (code.length) {
+        PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
+        PBRExposeTradingAsConnected();
+        PBRBeginScope([@"code:" stringByAppendingString:code], nil);
+    }
     ((void (*)(id, SEL, id))PBROriginalCodeSearch)(
         receiver, NSSelectorFromString(@"searchTapHandlerWithGesture:"), gesture);
-    if (code.length) PBRBeginScope([@"code:" stringByAppendingString:code], nil);
 }
 - (void)channelsSearchTapped:(UITapGestureRecognizer *)gesture {
     id receiver = [objc_getAssociatedObject(gesture, &PBRGestureControllerKey) nonretainedObjectValue];
@@ -292,12 +296,14 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
     NSArray *selected = [collection respondsToSelector:@selector(indexPathsForSelectedItems)]
         ? [collection indexPathsForSelectedItems] : nil;
     NSIndexPath *path = selected.firstObject;
-    ((void (*)(id, SEL, id))PBROriginalChannelsSearch)(
-        receiver, NSSelectorFromString(@"searchTapHandlerWithGesture:"), gesture);
     if (path) {
+        PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
+        PBRExposeTradingAsConnected();
         PBRBeginScope([NSString stringWithFormat:@"channel:%ld:%ld",
                        (long)path.section, (long)path.item], nil);
     }
+    ((void (*)(id, SEL, id))PBROriginalChannelsSearch)(
+        receiver, NSSelectorFromString(@"searchTapHandlerWithGesture:"), gesture);
 }
 - (void)friendsSearchTapped:(UITapGestureRecognizer *)gesture {
     id receiver = [objc_getAssociatedObject(gesture, &PBRGestureControllerKey) nonretainedObjectValue];
@@ -306,13 +312,10 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
         receiver, NSSelectorFromString(@"buttonTapHandlerWithGesture:"), gesture);
     NSString *target = PBRInvitedFriendLegacyID();
     if (target.length) {
+        PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
+        PBRExposeTradingAsConnected();
         PBRBeginScope(@"friends", target);
-        return;
     }
-    id table = PBRDynamicValue(receiver, @"tableView");
-    NSIndexPath *row = [table respondsToSelector:@selector(indexPathForSelectedRow)]
-        ? [table indexPathForSelectedRow] : nil;
-    if (row) PBRBeginScope([NSString stringWithFormat:@"friends-row:%ld", (long)row.row], nil);
 }
 - (void)aboutSignInTapped:(UIButton *)sender {
     UIViewController *controller = [objc_getAssociatedObject(sender, &PBRAboutControllerKey) nonretainedObjectValue];
@@ -484,6 +487,12 @@ static NSString *PBRTargetLegacyID(GKMatchRequest *request) {
     return nil;
 }
 
+static NSString *PBRInviteSenderLegacyID(GKInvite *invite) {
+    if (!invite) return nil;
+    id sender = PBRDynamicValue(invite, @"sender");
+    return PBRPlayerIDFromObject(sender);
+}
+
 static void PBRBeginBackendMatch(GKMatchRequest *request) {
     NSInteger group = request.playerGroup;
     NSUInteger attributes = request.playerAttributes;
@@ -504,7 +513,8 @@ static void PBRMatchForInvite(id receiver, SEL selector, GKInvite *invite, id co
         if (PBROriginalMatchForInvite) ((void (*)(id, SEL, GKInvite *, id))PBROriginalMatchForInvite)(receiver, selector, invite, completion);
         return;
     }
-    PBRBeginScope(@"invite", nil);
+    NSString *sender = PBRInviteSenderLegacyID(invite);
+    if (sender.length) PBRBeginScope(@"friends", sender);
 }
 
 static void PBRStopRevivalMatch(id loadingView) {

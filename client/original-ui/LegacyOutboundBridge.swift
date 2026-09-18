@@ -12,12 +12,17 @@ enum LegacyOutboundBridge {
 func legacyOutbound(_ stringLow: UInt64, _ stringHigh: UInt64,
                     _ valueAddress: UnsafeRawPointer?) -> Int32 {
     guard Thread.isMainThread, let handle = LegacyOutboundBridge.handle,
-          let valueAddress = valueAddress, MemoryLayout<String>.size == 16 else { return 0 }
+          MemoryLayout<String>.size == 16 else { return 0 }
     var words = (stringLow, stringHigh)
     let type: String = withUnsafePointer(to: &words) {
         UnsafeRawPointer($0).load(as: String.self)
     }
     guard type.hasPrefix("trading") else { return 0 }
-    let value = valueAddress.load(as: Optional<Any>.self)
+    let value: Any?
+    if let valueAddress {
+        value = valueAddress.load(as: Optional<Any>.self)
+    } else {
+        value = nil
+    }
     return handle(type, value) ? 1 : 0
 }

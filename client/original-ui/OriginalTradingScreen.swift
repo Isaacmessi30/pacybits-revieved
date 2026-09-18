@@ -77,6 +77,27 @@ final class OriginalTradingScreen {
                                          updateProfile: false)
     }
 
+    /// Feeds the same peer intro event PACYBITS expects after Game Center
+    /// matchmaking. The receiver stores opponentInfo and advances the original
+    /// trading/navigation state; manually setting the profile dictionary alone
+    /// is not equivalent.
+    static func primeTradingIntro(peerClubName: String,
+                                  badgeName: String = "pacybits_fc_logo_large.png") throws {
+        let slide = _dyld_get_image_vmaddr_slide(0)
+        guard let entry = UnsafeRawPointer(bitPattern: 0x1006e48b4 + slide),
+              Array(UnsafeRawBufferPointer(start: entry, count: 16)) ==
+                [0xff,0x43,0x04,0xd1,0xfc,0x6f,0x0b,0xa9,0xfa,0x67,0x0c,0xa9,0xf8,0x5f,0x0d,0xa9] else {
+            throw RevivalFailure("Unsupported original trading receiver.")
+        }
+        let receive = unsafeBitCast(
+            entry, to: (@convention(thin) (String, [String:Any]) -> Void).self)
+        let opponent: [String:Any] = [
+            "clubName": String(peerClubName.prefix(40)),
+            "badgeName": badgeName
+        ]
+        receive("tradingIntro", ["value": opponent])
+    }
+
     static func deliverPretradeSignal(_ signal: TradeSignal) throws {
         guard ["new_friend_info", "tradingIntro"].contains(signal.type),
               signal.payload.count <= 12_000,

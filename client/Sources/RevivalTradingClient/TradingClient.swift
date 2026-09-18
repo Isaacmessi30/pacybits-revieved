@@ -45,9 +45,10 @@ public struct TradeRoom: Codable, Equatable, Sendable {
     public let handshakes: [String: String]?
     public let signals: [String: [TradeSignal]]?
     public let closedAt: Int64?
+    public let botPartner: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, status, expiresAt, revision, members, offers, ready, confirmed, handshakes, signals, closedAt
+        case id, status, expiresAt, revision, members, offers, ready, confirmed, handshakes, signals, closedAt, botPartner
         case selfKey = "self"
     }
     public var isCompleted: Bool { status == "completed" }
@@ -124,6 +125,7 @@ private struct TradeRequest: Encodable {
     var scope: String?
     var targetLegacyId: String?
     var legacyId: String?
+    var cardIds: [String]?
 }
 private struct ErrorResponse: Decodable { let error: String }
 
@@ -198,6 +200,12 @@ public actor TradingClient {
     public func sendSignal(roomID: String, type: String, payload: String) async throws -> TradingResponse {
         try await send(TradeRequest(action: "signal", roomId: roomID,
                                     signalType: type, signalPayload: payload))
+    }
+    public func setBotWishlist(roomID: String, cardIDs: [String]) async throws -> TradingResponse {
+        try await send(TradeRequest(action: "botWishlist", roomId: roomID, cardIds: cardIDs))
+    }
+    public func setBotPeerHandshake(roomID: String, payload: String) async throws -> TradingResponse {
+        try await send(TradeRequest(action: "botPeerHandshake", roomId: roomID, payload: payload))
     }
     public func cancel(roomID: String) async throws -> TradingResponse {
         try await send(TradeRequest(action: "cancel", roomId: roomID))

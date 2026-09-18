@@ -6,7 +6,6 @@ id _Nullable PBRPlayerForIdentifier(NSString * _Nonnull identifier);
 UIViewController * _Nullable PBRInstantiateOriginalTrading(void);
 
 BOOL PBRStartOriginalNativeMatch(NSString * _Nonnull peerAlias);
-BOOL PBRNativeFindCompletionWasUsed(void);
 UIViewController * _Nullable PBRCurrentOriginalTrading(void);
 UIViewController * _Nullable PBRPresentOriginalTradingFallback(void);
 

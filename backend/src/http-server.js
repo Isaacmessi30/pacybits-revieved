@@ -47,6 +47,30 @@ export function createTradingHTTPServer(trade) {
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
       catch { return reply(400, { error: 'INVALID_JSON' }); }
       const result = await trade({ authorization: req.headers.authorization, body, byteLength: length });
+
+      const safeActions = new Set([
+        'register', 'importLegacyInventory', 'replaceInventory', 'status',
+        'queue', 'leaveQueue', 'invite', 'join', 'ready', 'confirm',
+        'offer', 'cancel', 'signal', 'nativeHandshake'
+      ]);
+      const action = safeActions.has(body?.action) ? body.action : 'unknown';
+      const room = result.body?.room;
+      const tradingLog = {
+        event: 'trading',
+        action,
+        status: result.status,
+        ...(action === 'queue' && typeof body?.scope === 'string'
+          ? { scope: String(body.scope).slice(0, 128) }
+          : {}),
+        ...(typeof result.body?.queued === 'boolean' ? { queued: result.body.queued } : {}),
+        ...(room ? {
+          roomStatus: room.status,
+          members: Array.isArray(room.members) ? room.members.length : undefined,
+          testPartner: room.testPartner === true
+        } : {})
+      };
+      console.log(JSON.stringify(tradingLog));
+
       reply(result.status, result.body);
     } catch {
       if (!res.headersSent && !res.destroyed) reply(503, { error: 'TEMPORARILY_UNAVAILABLE' });

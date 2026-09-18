@@ -409,6 +409,72 @@ __attribute__((constructor)) static void PBRStartRevivalProbe(void) {
     });
 }
 
+
+@interface PBRFakeGKMatch : NSObject
+@property(nonatomic, copy) NSArray<GKPlayer *> *players;
+@property(nonatomic, weak) id delegate;
+@end
+
+@implementation PBRFakeGKMatch
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        GKPlayer *player = GKLocalPlayer.localPlayer;
+        _players = player ? @[player] : @[];
+    }
+    return self;
+}
+- (BOOL)sendDataToAllPlayers:(NSData *)data
+                withDataMode:(GKMatchSendDataMode)mode
+                       error:(NSError *__autoreleasing *)error {
+    (void)data; (void)mode;
+    if (error) *error = nil;
+    return YES;
+}
+- (BOOL)sendData:(NSData *)data
+       toPlayers:(NSArray<GKPlayer *> *)players
+        dataMode:(GKMatchSendDataMode)mode
+           error:(NSError *__autoreleasing *)error {
+    (void)data; (void)players; (void)mode;
+    if (error) *error = nil;
+    return YES;
+}
+- (void)disconnect {}
+- (NSUInteger)expectedPlayerCount { return 0; }
+@end
+
+BOOL PBRStartOriginalNativeMatch(NSString *peerAlias) {
+    (void)peerAlias;
+    @try {
+        intptr_t slide = _dyld_get_image_vmaddr_slide(0);
+        void *raw = *(void **)(uintptr_t)(0x1012be350ULL + slide);
+        if (!raw) return NO;
+        id helper = (__bridge id)raw;
+        Class expected = NSClassFromString(@"_TtC13PACYBITSFUT2016GameCenterHelper");
+        if (!expected || ![helper isKindOfClass:expected]) return NO;
+        SEL selector = NSSelectorFromString(@"matchmakerViewController:didFindMatch:");
+        if (![helper respondsToSelector:selector]) return NO;
+        PBRFakeGKMatch *match = [PBRFakeGKMatch new];
+        ((void (*)(id, SEL, id, id))objc_msgSend)(helper, selector, nil, match);
+        return YES;
+    } @catch (NSException *exception) {
+        return NO;
+    }
+}
+
+UIViewController *PBRCurrentOriginalTrading(void) {
+    @try {
+        intptr_t slide = _dyld_get_image_vmaddr_slide(0);
+        void *raw = *(void **)(uintptr_t)(0x1012bef00ULL + slide);
+        if (!raw) return nil;
+        id controller = (__bridge id)raw;
+        Class expected = NSClassFromString(@"_TtC13PACYBITSFUT2021TradingViewController");
+        return expected && [controller isKindOfClass:expected] ? controller : nil;
+    } @catch (NSException *exception) {
+        return nil;
+    }
+}
+
 NSString *PBRCardLabel(NSString *identifier) {
     @try {
         id object = PBRPlayerForIdentifier(identifier);

@@ -190,10 +190,8 @@ static void PBRTradingMenuViewDidAppear(id receiver, SEL selector, BOOL animated
         PBRExposeTradingAsConnected();
         ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(
             receiver, NSSelectorFromString(@"buttonTapHandlerWithGesture:"), gesture);
-        NSString *mode = objc_getAssociatedObject(gesture, &PBRGestureModeKey);
-        if ([mode isEqualToString:@"random"]) {
-            PBRBeginScope(@"random", nil);
-        }
+        // Random matchmaking starts only through the hooked GameKit
+        // findMatchForRequest flow below, so both clients use the same scope.
     });
 }
 - (void)codeSearchTapped:(UITapGestureRecognizer *)gesture {
@@ -341,6 +339,12 @@ static void PBRMatchmakerCancel(id receiver, SEL selector) {
         SEL cancel = NSSelectorFromString(@"cancelOriginalMatch");
         if ([launcher respondsToSelector:cancel]) ((void (*)(id, SEL))objc_msgSend)(launcher, cancel);
         PBRTradingArmedUntil = 0;
+
+        UIViewController *top = [[PBRRevivalBootstrap shared] topPresenter];
+        if ([top isKindOfClass:GKMatchmakerViewController.class]) {
+            [top dismissViewControllerAnimated:YES completion:nil];
+        }
+        return;
     }
     if (PBROriginalMatchmakerCancel) ((void (*)(id, SEL))PBROriginalMatchmakerCancel)(receiver, selector);
 }

@@ -46,9 +46,10 @@ public struct TradeRoom: Codable, Equatable, Sendable {
     public let signals: [String: [TradeSignal]]?
     public let closedAt: Int64?
     public let botPartner: Bool?
+    public let testPartner: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, status, expiresAt, revision, members, offers, ready, confirmed, handshakes, signals, closedAt, botPartner
+        case id, status, expiresAt, revision, members, offers, ready, confirmed, handshakes, signals, closedAt, botPartner, testPartner
         case selfKey = "self"
     }
     public var isCompleted: Bool { status == "completed" }

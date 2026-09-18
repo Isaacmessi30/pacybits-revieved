@@ -161,6 +161,18 @@ final class OriginalTradingScreen {
         receive(signal.type, ["value": value])
     }
 
+    func renderWishlist(_ ids: [String]) throws {
+        try requireActive()
+        var players: [Any] = []
+        var seen = Set<String>()
+        for id in ids.prefix(50) where !seen.contains(id) {
+            guard let player = PBRPlayerForIdentifier(id) else { continue }
+            seen.insert(id)
+            players.append(player)
+        }
+        receive("tradingDidSetWishlist", ["value": players])
+    }
+
     func render(_ actions: [OriginalTradeAction]) throws {
         try requireActive()
         var messages: [(String, Any)] = []

@@ -109,14 +109,9 @@ final class OriginalTradingCoordinator {
             apiKey: config.apiKey,
             store: KeychainFirebaseSessionStore(projectID: config.projectID, bundleID: config.bundleID))
         authentication = auth
-        let credentials: FirebaseSession
-        do { credentials = try await auth.session() }
-        catch FirebaseAuthenticationError.signInRequired {
-            credentials = try await GoogleBrowserLogin(configuration: config, authentication: auth)
-                .signIn(presenting: presenter)
-        }
-        firebaseUID = credentials.uid
 
+        // Prove backend reachability before Firebase session restoration. A stale
+        // cached token must never make Random fail before the first network probe.
         let transport = URLSessionTradingTransport()
         var awake = false
         for _ in 0..<4 {
@@ -129,6 +124,18 @@ final class OriginalTradingCoordinator {
             try await Task.sleep(nanoseconds: 1_000_000_000)
         }
         guard awake else { throw RevivalFailure("Trading server is unavailable.") }
+
+        let credentials: FirebaseSession
+        do {
+            credentials = try await auth.session()
+        } catch FirebaseAuthenticationError.signInRequired {
+            credentials = try await GoogleBrowserLogin(configuration: config, authentication: auth)
+                .signIn(presenting: presenter)
+        } catch FirebaseAuthenticationError.rejected(let status) where [400, 401, 403].contains(status) {
+            credentials = try await GoogleBrowserLogin(configuration: config, authentication: auth)
+                .signIn(presenting: presenter)
+        }
+        firebaseUID = credentials.uid
 
         let client = try TradingClient(
             endpoint: URL(string: "https://pacybits-revival-trading.onrender.com/trading")!) {

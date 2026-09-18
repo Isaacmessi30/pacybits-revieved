@@ -202,6 +202,9 @@ public actor TradingClient {
         try await send(TradeRequest(action: "signal", roomId: roomID,
                                     signalType: type, signalPayload: payload))
     }
+    public func setWishlist(cardIDs: [String]) async throws -> TradingResponse {
+        try await send(TradeRequest(action: "setWishlist", cardIds: cardIDs))
+    }
     public func setBotWishlist(roomID: String, cardIDs: [String]) async throws -> TradingResponse {
         try await send(TradeRequest(action: "botWishlist", roomId: roomID, cardIds: cardIDs))
     }

@@ -173,7 +173,9 @@ final class RevivalInventoryLedger {
     /// Recovery is allowed only when the authenticated server collection exactly
     /// matches PACYBITS' current persisted collection, so no cards or coins are
     /// imported, overwritten or duplicated during the re-anchor.
-    func recoverAfterReinstall(uid: String, response: TradingResponse) throws {
+    func localSnapshot() throws -> TradeInventory { try bridge.snapshot() }
+
+    func attachServerBaseline(uid: String, response: TradingResponse) throws {
         guard record == nil,
               response.ok,
               response.inventoryReady == true,
@@ -181,11 +183,38 @@ final class RevivalInventoryLedger {
               let version = response.inventoryVersion,
               version > 0,
               response.preserveFirstCopy == true else {
+            throw RevivalFailure("The saved trading collection cannot be attached safely.")
+        }
+        record = RevivalLedger(uid: uid, server: server, version: version)
+        do { try save() }
+        catch { record = nil; throw error }
+    }
+
+    func recoverAfterReinstall(uid: String, response: TradingResponse) throws {
+        guard let server = response.inventory else {
             throw RevivalFailure("The saved trading collection cannot be recovered safely.")
         }
         let local = try bridge.snapshot()
         guard local == server else {
             throw RevivalFailure("Your PACYBITS collection and the saved trading collection are different. No cards or coins were changed.")
+        }
+        try attachServerBaseline(uid: uid, response: response)
+    }
+
+    func restoreServerCollection(uid: String, response: TradingResponse) throws {
+        guard record == nil,
+              response.ok,
+              response.inventoryReady == true,
+              let server = response.inventory,
+              let version = response.inventoryVersion,
+              version > 0,
+              response.preserveFirstCopy == true else {
+            throw RevivalFailure("The saved trading collection cannot be restored safely.")
+        }
+        let before = try bridge.snapshot()
+        if before != server { try bridge.apply(before: before, after: server) }
+        guard try bridge.snapshot() == server else {
+            throw RevivalFailure("PACYBITS did not save the restored trading collection.")
         }
         record = RevivalLedger(uid: uid, server: server, version: version)
         do { try save() }

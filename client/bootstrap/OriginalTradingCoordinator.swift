@@ -5,6 +5,7 @@ import UIKit
 @MainActor
 final class OriginalTradingCoordinator {
     enum Mode { case random, code, friends, channels }
+    private enum CollectionRelinkChoice { case useDevice, restoreServer, cancel }
 
     private static var active: OriginalTradingCoordinator?
 
@@ -139,12 +140,52 @@ final class OriginalTradingCoordinator {
             _ = try await client.importLegacyInventory(local, preserveFirstCopy: true)
         } else if storage.record == nil {
             let status = try await client.status()
-            try storage.recoverAfterReinstall(uid: credentials.uid, response: status)
+            guard let server = status.inventory, let version = status.inventoryVersion, version > 0 else {
+                throw TradingClientError.invalidResponse
+            }
+            let local = try storage.localSnapshot()
+            if local == server {
+                try storage.attachServerBaseline(uid: credentials.uid, response: status)
+            } else {
+                switch try await chooseCollectionRelink(local: local, server: server) {
+                case .useDevice:
+                    let replaced = try await client.replaceInventory(
+                        local, expectedVersion: version, preserveFirstCopy: true)
+                    try storage.attachServerBaseline(uid: credentials.uid, response: replaced)
+                case .restoreServer:
+                    try storage.restoreServerCollection(uid: credentials.uid, response: status)
+                case .cancel:
+                    throw CancellationError()
+                }
+            }
         }
         guard storage.record != nil else {
             throw RevivalFailure("The trading collection could not be attached to this installation.")
         }
         return (client, storage)
+    }
+
+    private func chooseCollectionRelink(local: TradeInventory,
+                                        server: TradeInventory) async throws -> CollectionRelinkChoice {
+        guard let presenter else { throw CancellationError() }
+        return await withCheckedContinuation { continuation in
+            let localSummary = "\(local.coins) coins, \(local.cards.values.reduce(0, +)) cards"
+            let serverSummary = "\(server.coins) coins, \(server.cards.values.reduce(0, +)) cards"
+            let alert = UIAlertController(
+                title: "Trading collection",
+                message: "This device and your saved trading account contain different collections.\n\nThis device: \(localSummary)\nSaved online: \(serverSummary)",
+                preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Use This Device", style: .default) { _ in
+                continuation.resume(returning: .useDevice)
+            })
+            alert.addAction(UIAlertAction(title: "Restore Saved Online", style: .default) { _ in
+                continuation.resume(returning: .restoreServer)
+            })
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
+                continuation.resume(returning: .cancel)
+            })
+            presenter.present(alert, animated: true)
+        }
     }
 
     private func checkPlayer() async throws {

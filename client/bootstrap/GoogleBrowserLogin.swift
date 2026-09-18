@@ -22,9 +22,8 @@ final class GoogleBrowserLogin: NSObject, ASWebAuthenticationPresentationContext
         anchor ?? ASPresentationAnchor()
     }
     func signIn(presenting presenter: UIViewController) async throws -> FirebaseSession {
-        guard browser == nil, let window = presenter.view.window,
-              Bundle.main.bundleIdentifier == configuration.bundleID else {
-            throw RevivalFailure("Google login requires the configured bundle ID: \(configuration.bundleID). Keep that ID when signing the IPA.")
+        guard browser == nil, let window = presenter.view.window else {
+            throw RevivalFailure("Google login could not find an active app window.")
         }
         let verifier = try Self.random(), state = try Self.random()
         anchor = window

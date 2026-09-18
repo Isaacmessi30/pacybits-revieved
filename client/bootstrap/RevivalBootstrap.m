@@ -190,8 +190,15 @@ static void PBRTradingMenuViewDidAppear(id receiver, SEL selector, BOOL animated
         PBRExposeTradingAsConnected();
         ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(
             receiver, NSSelectorFromString(@"buttonTapHandlerWithGesture:"), gesture);
-        // Random matchmaking starts only through the hooked GameKit
-        // findMatchForRequest flow below, so both clients use the same scope.
+        // The original PACYBITS random flow depended on a live Game Center
+        // session before it called findMatchForRequest:. In the revival there is
+        // no real GK session, so start the backend queue immediately. Use the
+        // same canonical 0/0 scope as the fallback GameKit hook; beginOriginalMatch
+        // is idempotent while a coordinator is already active.
+        NSString *mode = objc_getAssociatedObject(gesture, &PBRGestureModeKey);
+        if ([mode isEqualToString:@"random"]) {
+            PBRBeginScope(@"g:0:a:0", nil);
+        }
     });
 }
 - (void)codeSearchTapped:(UITapGestureRecognizer *)gesture {

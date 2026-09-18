@@ -140,14 +140,19 @@ static NSString *PBRInvitedFriendLegacyID(void) {
     return nil;
 }
 
-static void PBRBeginScope(NSString *scope, NSString *target) {
-    UIViewController *presenter = [[PBRRevivalBootstrap shared] topPresenter];
-    if (!presenter || !scope.length) return;
+static BOOL PBRBeginScopeFromPresenter(UIViewController *presenter, NSString *scope, NSString *target) {
+    if (!presenter || !scope.length) return NO;
     Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
     SEL begin = NSSelectorFromString(@"beginOriginalMatchFrom:scope:targetLegacyID:localLegacyID:");
-    if (![launcher respondsToSelector:begin]) return;
+    if (![launcher respondsToSelector:begin]) return NO;
     ((void (*)(id, SEL, UIViewController *, NSString *, NSString *, NSString *))objc_msgSend)(
         launcher, begin, presenter, scope, target, PBRLocalLegacyID());
+    return YES;
+}
+
+static void PBRBeginScope(NSString *scope, NSString *target) {
+    UIViewController *presenter = [[PBRRevivalBootstrap shared] topPresenter];
+    (void)PBRBeginScopeFromPresenter(presenter, scope, target);
 }
 
 static void PBRPrepareGoogle(UIViewController *presenter, void (^completion)(BOOL)) {
@@ -162,9 +167,18 @@ static NSString *PBRNormalizedCode(id receiver);
 static NSString *PBRTradingModeForGesture(id receiver, UIGestureRecognizer *gesture) {
     UIView *source = gesture.view;
     if (!receiver || !source) return nil;
+
     for (NSString *getter in @[@"channelsButton", @"friendsButton", @"codeButton", @"randomButton"]) {
         id value = PBRDynamicValue(receiver, getter);
-        if (value == source) {
+        if (![value isKindOfClass:UIView.class]) continue;
+        UIView *button = value;
+
+        BOOL sameTree = (button == source) ||
+                        [source isDescendantOfView:button] ||
+                        [button isDescendantOfView:source];
+        CGPoint point = [gesture locationInView:button];
+        BOOL pointInside = CGRectContainsPoint(button.bounds, point);
+        if (sameTree || pointInside) {
             return [getter stringByReplacingOccurrencesOfString:@"Button" withString:@""];
         }
     }
@@ -185,24 +199,21 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
     if (!presenter) return;
 
     PBRTradingArmedUntil = CACurrentMediaTime() + 300.0;
-    PBRPrepareGoogle(presenter, ^(BOOL ok) {
-        if (!ok) {
+    PBRExposeTradingAsConnected();
+
+    // Random must start the real revival coordinator immediately. The
+    // coordinator already owns Google/Firebase authentication, so do not gate
+    // it behind a second prepare/auth callback that can prevent any network
+    // request from ever being made.
+    if ([mode isEqualToString:@"random"]) {
+        if (!PBRBeginScopeFromPresenter(presenter, @"g:0:a:0", nil)) {
             PBRTradingArmedUntil = 0;
-            return;
         }
+    }
 
-        PBRExposeTradingAsConnected();
-
-        // Start revival matchmaking before PACYBITS enters its retired GameKit
-        // flow. This direct method hook is independent of view/gesture rewiring.
-        if ([mode isEqualToString:@"random"]) {
-            PBRBeginScope(@"g:0:a:0", nil);
-        }
-
-        if (PBROriginalTradingMenuTap) {
-            ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(receiver, selector, gesture);
-        }
-    });
+    if (PBROriginalTradingMenuTap) {
+        ((void (*)(id, SEL, id))PBROriginalTradingMenuTap)(receiver, selector, gesture);
+    }
 }
 
 @implementation PBRRevivalBootstrap (TradingTiles)

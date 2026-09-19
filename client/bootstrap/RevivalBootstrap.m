@@ -122,6 +122,8 @@ static char PBRChatOverlayKey;
 static char PBRAcceptOverlayKey;
 static char PBRCancelOverlayKey;
 static char PBRMakeChangesOverlayKey;
+static UIButton *PBRAcceptWindowOverlay = nil;
+static UIButton *PBRCancelWindowOverlay = nil;
 static NSMutableArray<NSString *> *PBRCachedWishlistIdentifiers = nil;
 static UIViewController *PBRLastTradingMenuController = nil;
 static __weak UINavigationController *PBRLastTradingNavigationController = nil;
@@ -358,13 +360,43 @@ static void PBRRemoveControlOverlay(UIView *host, const void *key, BOOL enableHo
     }
 }
 
+static UIButton *PBRInstallWindowOverlay(UIView *target, UIButton **storage, SEL action) {
+    if (!target || !target.window) return nil;
+    UIWindow *window = target.window;
+    UIButton *overlay = *storage;
+    if (![overlay isKindOfClass:UIButton.class] || overlay.superview != window) {
+        [overlay removeFromSuperview];
+        overlay = [UIButton buttonWithType:UIButtonTypeCustom];
+        overlay.backgroundColor = UIColor.clearColor;
+        overlay.exclusiveTouch = YES;
+        overlay.accessibilityIdentifier = @"pbr-revival-window-control";
+        [overlay addTarget:[PBRRevivalBootstrap shared] action:action forControlEvents:UIControlEventTouchUpInside];
+        [window addSubview:overlay];
+        *storage = overlay;
+    }
+    CGRect frame = [target convertRect:target.bounds toView:window];
+    frame = CGRectInset(frame, -10.0, -8.0);
+    overlay.frame = frame;
+    overlay.hidden = NO;
+    overlay.userInteractionEnabled = YES;
+    [window bringSubviewToFront:overlay];
+    return overlay;
+}
+
+static void PBRRemoveWindowOverlay(UIButton **storage) {
+    UIButton *overlay = *storage;
+    [overlay removeFromSuperview];
+    *storage = nil;
+}
+
 static void PBRRefreshTradeControlOverlays(void) {
     @try {
         UIViewController *trade = PBRRawOriginalTrading();
         if (trade && trade.isViewLoaded && trade.view.window) {
             UIView *chat = [trade valueForKey:@"chatButton"];
-            PBRInstallControlOverlay(chat, &PBRChatOverlayKey,
-                                     @selector(revivalChatOverlayPressed:), YES);
+            // Do not cover/disable the original chat gestures. The original
+            // chatTapHandler opens the real PACYBITS message UI.
+            PBRRemoveControlOverlay(chat, &PBRChatOverlayKey, YES);
 
             UIView *confirm = [trade valueForKey:@"confirmButton"];
             BOOL confirmed = NO;
@@ -381,12 +413,23 @@ static void PBRRefreshTradeControlOverlays(void) {
         Class completeClass = NSClassFromString(@"_TtC13PACYBITSFUT2026DialogTradingCompleteTrade");
         UIView *dialog = PBRFindViewOfClass(window, completeClass);
         if (dialog) {
+            dialog.userInteractionEnabled = YES;
             UIView *accept = [dialog valueForKey:@"acceptButton"];
             UIView *cancel = [dialog valueForKey:@"cancelButton"];
+
+            // Child overlays remain as a fallback, but window-level overlays sit
+            // above PACYBITS' disabled/blocking hierarchy and own the tap.
             PBRInstallControlOverlay(accept, &PBRAcceptOverlayKey,
                                      @selector(revivalAcceptOverlayPressed:), YES);
             PBRInstallControlOverlay(cancel, &PBRCancelOverlayKey,
                                      @selector(revivalCancelOverlayPressed:), YES);
+            PBRInstallWindowOverlay(accept, &PBRAcceptWindowOverlay,
+                                    @selector(revivalAcceptOverlayPressed:));
+            PBRInstallWindowOverlay(cancel, &PBRCancelWindowOverlay,
+                                    @selector(revivalCancelOverlayPressed:));
+        } else {
+            PBRRemoveWindowOverlay(&PBRAcceptWindowOverlay);
+            PBRRemoveWindowOverlay(&PBRCancelWindowOverlay);
         }
     } @catch (NSException *ignored) {}
 }
@@ -634,21 +677,18 @@ static void PBRInstallMessageButtonFallback(void) {
 }
 
 static void PBRTradingChatTap(id receiver, SEL selector, id gesture) {
-    if (PBRRevivalMatchActive() || PBRTradingIsArmed()) {
-        NSString *message = nil;
-        @try {
-            id label = [receiver valueForKey:@"messageLeft"];
-            if ([label respondsToSelector:@selector(text)]) message = [label text];
-        } @catch (NSException *ignored) {}
-        NSString *trimmed = [message stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if (trimmed.length) {
-            PBRHealthBeacon(@"live-message-send");
-            PBRSubmitNativeSignal(@"tradingMessage", trimmed);
-            return;
-        }
-    }
+    // Preserve PACYBITS' real chat/message interaction. The previous revival
+    // shortcut incorrectly sent messageLeft (the player's status, e.g. "LOL")
+    // instead of opening the original message UI.
     if (PBROriginalTradingChatTap) {
         ((void (*)(id, SEL, id))PBROriginalTradingChatTap)(receiver, selector, gesture);
+    }
+    if (PBRRevivalMatchActive() || PBRTradingIsArmed()) {
+        PBRHealthBeacon(@"chat-original-open");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.06 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ PBRInstallMessageButtonFallback(); });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ PBRInstallMessageButtonFallback(); });
     }
 }
 
@@ -1858,6 +1898,59 @@ void PBRReturnToTradingMenu(void) {
             }
         }
         PBRHealthBeacon(@"complete-return-trading-menu-missing");
+    });
+}
+
+void PBRShowRevivalCompleteTradeDialog(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
+            if (!window) return;
+            Class completeClass = NSClassFromString(@"_TtC13PACYBITSFUT2026DialogTradingCompleteTrade");
+            UIView *existing = PBRFindViewOfClass(window, completeClass);
+            if (existing) {
+                existing.userInteractionEnabled = YES;
+                PBRRefreshTradeControlOverlays();
+                return;
+            }
+
+            NSArray *objects = [[NSBundle mainBundle] loadNibNamed:@"DialogTradingCompleteTrade"
+                                                             owner:nil
+                                                           options:nil];
+            UIView *dialog = nil;
+            for (id object in objects) {
+                if ([object isKindOfClass:completeClass]) {
+                    dialog = object;
+                    break;
+                }
+            }
+            if (!dialog) {
+                PBRHealthBeacon(@"complete-dialog-load-failed");
+                return;
+            }
+            dialog.frame = window.bounds;
+            dialog.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            dialog.userInteractionEnabled = YES;
+            [window addSubview:dialog];
+            [window bringSubviewToFront:dialog];
+            PBRHealthBeacon(@"complete-dialog-revival-shown");
+            PBRRefreshTradeControlOverlays();
+        } @catch (NSException *exception) {
+            PBRHealthBeacon(@"complete-dialog-revival-failed");
+        }
+    });
+}
+
+void PBRHideRevivalCompleteTradeDialog(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
+            Class completeClass = NSClassFromString(@"_TtC13PACYBITSFUT2026DialogTradingCompleteTrade");
+            UIView *dialog = PBRFindViewOfClass(window, completeClass);
+            [dialog removeFromSuperview];
+            PBRRemoveWindowOverlay(&PBRAcceptWindowOverlay);
+            PBRRemoveWindowOverlay(&PBRCancelWindowOverlay);
+        } @catch (NSException *ignored) {}
     });
 }
 

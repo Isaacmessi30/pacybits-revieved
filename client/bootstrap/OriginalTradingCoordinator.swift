@@ -59,6 +59,7 @@ final class OriginalTradingCoordinator {
     private var isBotRoom = false
     private var lastWishlistSignature: String?
     private var lastNativeOfferSignature: String?
+    private var localOfferLocked = false
     private var lastOutboundActionName: String?
     private var lastOutboundActionAt = Date.distantPast
     private var closed = false
@@ -346,6 +347,7 @@ final class OriginalTradingCoordinator {
         session = tradeSession
         peerState = try OriginalTradePeerState(room: room)
         isBotRoom = room.botPartner == true
+        localOfferLocked = false
         if let own = room.offers[room.selfKey] {
             lastNativeOfferSignature = Self.offerSignature(own)
         }
@@ -412,7 +414,7 @@ final class OriginalTradingCoordinator {
 
     private static let presentationSignalTypes: Set<String> = [
         "new_friend_info", "tradingIntro",
-        "tradingDidSetMessage", "tradingDidSetFilters", "tradingDidSetWishlist",
+        "tradingDidSetMessage", "tradingMessage", "tradingDidSetFilters", "tradingDidSetWishlist",
         "emote",
         "tradingStartAnimatingOutline", "tradingStopAnimatingOutline",
         "tradingStartAnimatingWishlist", "tradingStopAnimatingWishlist",
@@ -491,8 +493,20 @@ final class OriginalTradingCoordinator {
     private func submit(_ action: OriginalTradeAction) async {
         guard let session, !closed else { return }
         do {
+            if action == .ready {
+                try await syncNativeOfferIfNeeded(force: true)
+            }
             try await checkPlayer()
             let response = try await session.submit(action)
+            switch action {
+            case .ready:
+                localOfferLocked = true
+            case .makeChanges, .cancelAcceptance:
+                localOfferLocked = false
+                lastNativeOfferSignature = nil
+            default:
+                break
+            }
             try process(response)
         } catch {
             showError(error)
@@ -548,8 +562,9 @@ final class OriginalTradingCoordinator {
         return TradeOffer(coins: coinsNumber.intValue, cards: cards, slots: slots)
     }
 
-    private func syncNativeOfferIfNeeded() async throws {
+    private func syncNativeOfferIfNeeded(force: Bool = false) async throws {
         guard let screen, screen.isActive, let session, !closed else { return }
+        guard force || !localOfferLocked else { return }
         let offer = try nativeOffer()
         let signature = Self.offerSignature(offer)
         guard signature != lastNativeOfferSignature else { return }
@@ -625,26 +640,31 @@ final class OriginalTradingCoordinator {
         let activeScreen = (screen?.isActive == true) ? screen : nil
 
         if let activeScreen {
-            let events = try next.events(after: peerState)
-            if !events.isEmpty { try activeScreen.render(events) }
+            do {
+                guard activeScreen.isActive else { return }
+                let events = try next.events(after: peerState)
+                if !events.isEmpty { try activeScreen.render(events) }
 
-            let wishlist = room.peerWishlist
-            let signature = wishlist.joined(separator: "|")
-            if signature != lastPeerWishlistSignature {
-                try activeScreen.renderWishlist(wishlist)
-                lastPeerWishlistSignature = signature
+                let wishlist = room.peerWishlist
+                let signature = wishlist.joined(separator: "|")
+                if signature != lastPeerWishlistSignature {
+                    try activeScreen.renderWishlist(wishlist)
+                    lastPeerWishlistSignature = signature
+                }
+
+                for signal in room.peerSignals.sorted(by: { $0.seq < $1.seq })
+                where signal.seq > lastPeerSignalSeq {
+                    guard activeScreen.isActive else { return }
+                    try activeScreen.renderSignal(signal)
+                    lastPeerSignalSeq = max(lastPeerSignalSeq, signal.seq)
+                }
+                peerState = next
+            } catch {
+                if !activeScreen.isActive {
+                    return
+                }
+                throw error
             }
-
-            for signal in room.peerSignals.sorted(by: { $0.seq < $1.seq })
-            where signal.seq > lastPeerSignalSeq {
-                try activeScreen.renderSignal(signal)
-                lastPeerSignalSeq = max(lastPeerSignalSeq, signal.seq)
-            }
-
-            // Only advance peerState after PACYBITS has actually received the
-            // visual actions. If the user is temporarily in Duplicates/card
-            // picker, the events remain pending and render on return.
-            peerState = next
         } else if screen == nil {
             for signal in room.peerSignals.sorted(by: { $0.seq < $1.seq })
             where signal.seq > lastPeerSignalSeq {

@@ -289,7 +289,7 @@ final class RevivalInventoryLedger {
             throw RevivalFailure("A previous trade is awaiting save verification.")
         }
         guard response.ok, let server = response.inventory, let version = response.inventoryVersion, var old = record,
-              response.preserveFirstCopy == true, version >= old.version else {
+              version >= old.version else {
             throw RevivalFailure("This server collection is not compatible with this device. No save was changed.")
         }
         func valid(_ inventory: TradeInventory) -> Bool {

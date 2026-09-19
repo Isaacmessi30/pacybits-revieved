@@ -411,7 +411,7 @@ static void PBRInstallMessageButtonFallback(void) {
 }
 
 static void PBRTradingChatTap(id receiver, SEL selector, id gesture) {
-    if (PBRShouldInterceptTrading()) {
+    if (PBRRevivalMatchActive() || PBRTradingIsArmed()) {
         NSString *message = nil;
         @try {
             id label = [receiver valueForKey:@"messageLeft"];
@@ -1029,39 +1029,24 @@ static void PBRTradingReadyPan(id receiver, SEL selector, id sender) {
 }
 
 static void PBRTradingAcceptTap(id receiver, SEL selector, id gesture) {
-    if (PBRShouldInterceptTrading()) {
-        PBRHealthBeacon(@"fallback-accept");
-        PBRSubmitNativeFallback(@"accept");
-        return;
-    }
-    if (PBROriginalTradeAcceptTap) {
-        ((void (*)(id, SEL, id))PBROriginalTradeAcceptTap)(receiver, selector, gesture);
-    }
+    // This dialog only belongs to the revived trading flow. Never call the
+    // retired GameKit accept routine; a single tap maps to one backend confirm.
+    PBRHealthBeacon(@"fallback-accept");
+    PBRSubmitNativeFallback(@"accept");
 }
 
 static void PBRTradingMakeChangesTap(id receiver, SEL selector, id gesture) {
-    if (PBRShouldInterceptTrading()) {
-        PBRHealthBeacon(@"fallback-make-changes");
-        PBRRestoreLocalReadyUI();
-        PBRSubmitNativeFallback(@"makeChanges");
-        return;
-    }
-    if (PBROriginalTradeMakeChangesTap) {
-        ((void (*)(id, SEL, id))PBROriginalTradeMakeChangesTap)(receiver, selector, gesture);
-    }
+    // Make Changes only clears Ready/Accept state; it must never leave the room.
+    PBRHealthBeacon(@"fallback-make-changes");
+    PBRRestoreLocalReadyUI();
+    PBRSubmitNativeFallback(@"makeChanges");
 }
 
 static void PBRTradingCancelAcceptTap(id receiver, SEL selector, id gesture) {
-    if (PBRShouldInterceptTrading()) {
-        // User means "cancel my Ready/Accept", not leave the room.
-        PBRHealthBeacon(@"fallback-cancel-ready");
-        PBRRestoreLocalReadyUI();
-        PBRSubmitNativeFallback(@"makeChanges");
-        return;
-    }
-    if (PBROriginalTradeCancelAcceptTap) {
-        ((void (*)(id, SEL, id))PBROriginalTradeCancelAcceptTap)(receiver, selector, gesture);
-    }
+    // Cancel on the confirmation dialog means cancel readiness, not leave trade.
+    PBRHealthBeacon(@"fallback-cancel-ready");
+    PBRRestoreLocalReadyUI();
+    PBRSubmitNativeFallback(@"makeChanges");
 }
 
 

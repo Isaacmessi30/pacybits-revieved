@@ -1192,6 +1192,36 @@ BOOL PBRStartOriginalNativeMatch(NSString *peerAlias) {
 }
 
 
+void PBRReturnToTradingMenu(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *rememberedMenu = PBRLastTradingMenuController;
+        UINavigationController *rememberedNav = PBRLastTradingNavigationController ?: rememberedMenu.navigationController;
+        UITabBarController *rememberedTabs = PBRLastTradingTabController ?: rememberedMenu.tabBarController;
+
+        if (rememberedMenu && rememberedNav) {
+            if (rememberedTabs) rememberedTabs.selectedViewController = rememberedNav;
+            [rememberedNav popToViewController:rememberedMenu animated:NO];
+            PBRHealthBeacon(@"complete-return-trading-menu");
+            return;
+        }
+
+        Class menuClass = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
+        UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
+        UIViewController *menu = PBRFindControllerOfClassInTree(window.rootViewController, menuClass);
+        if (menu) {
+            UINavigationController *nav = menu.navigationController;
+            UITabBarController *tabs = menu.tabBarController;
+            if (tabs && nav) tabs.selectedViewController = nav;
+            if (nav) {
+                [nav popToViewController:menu animated:NO];
+                PBRHealthBeacon(@"complete-return-trading-menu");
+                return;
+            }
+        }
+        PBRHealthBeacon(@"complete-return-trading-menu-missing");
+    });
+}
+
 void PBRResetOriginalTradeState(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         @try {

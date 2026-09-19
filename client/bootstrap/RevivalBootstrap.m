@@ -142,6 +142,8 @@ id PBRPlayerForIdentifier(NSString *identifier);
 static void PBRHealthBeacon(NSString *probe);
 static BOOL PBRShouldInterceptTrading(void);
 static UIViewController *PBRRawOriginalTrading(void);
+static UIView *PBRFindViewOfClass(UIView *root, Class cls);
+static void PBRInstallMessageButtonFallback(void);
 
 static void PBRCaptureWishlistObject(id item,
                                      NSMutableArray<NSString *> *result,

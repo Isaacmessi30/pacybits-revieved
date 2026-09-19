@@ -1486,8 +1486,44 @@ static void PBRTradingLeaveTap(id receiver, SEL selector, id gesture) {
         return;
     }
 
-    // Avoid PACYBITS' retired GameKit disconnect path. Cancel the revival room
-    // first, then let the gesture callback unwind before changing UIKit hierarchy.
+    // PACYBITS can misroute the Ready/Accept Cancel control through the old
+    // post-trade Leave dialog. While the live trade is Ready/Accepting, Cancel
+    // means Make Changes and must keep the backend room alive.
+    BOOL shouldMakeChanges = NO;
+    @try {
+        UIViewController *trade = PBRRawOriginalTrading();
+        id confirmButton = [trade valueForKey:@"confirmButton"];
+        if (confirmButton) {
+            id confirmedValue = [confirmButton valueForKey:@"isConfirmed"];
+            if ([confirmedValue respondsToSelector:@selector(boolValue)]) {
+                shouldMakeChanges = [confirmedValue boolValue];
+            }
+        }
+    } @catch (NSException *ignored) {}
+
+    @try {
+        Class completeClass = NSClassFromString(@"_TtC13PACYBITSFUT2026DialogTradingCompleteTrade");
+        UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
+        UIView *complete = PBRFindViewOfClass(window, completeClass);
+        if (complete) shouldMakeChanges = YES;
+    } @catch (NSException *ignored) {}
+
+    if (shouldMakeChanges) {
+        PBRHealthBeacon(@"leave-rerouted-make-changes");
+        PBRRestoreLocalReadyUI();
+        PBRSubmitNativeFallback(@"makeChanges");
+        @try {
+            SEL hide = NSSelectorFromString(@"hide:");
+            if ([receiver respondsToSelector:hide]) {
+                ((void (*)(id, SEL, BOOL))objc_msgSend)(receiver, hide, YES);
+            } else if ([receiver isKindOfClass:UIView.class]) {
+                [(UIView *)receiver removeFromSuperview];
+            }
+        } @catch (NSException *ignored) {}
+        return;
+    }
+
+    // Only a genuine Leave Trade action may cancel the backend room.
     PBRHealthBeacon(@"fallback-leave");
     Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
     SEL cancel = NSSelectorFromString(@"cancelOriginalMatch");

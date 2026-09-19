@@ -1042,6 +1042,39 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
 }
 
 
+
+- (void)revivalChatOverlayPressed:(UIButton *)sender {
+    UIViewController *trade = PBRRawOriginalTrading();
+    NSString *message = nil;
+    @try {
+        id label = [trade valueForKey:@"messageLeft"];
+        if ([label respondsToSelector:@selector(text)]) message = [label text];
+    } @catch (NSException *ignored) {}
+    NSString *trimmed = [message stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (trimmed.length) {
+        sender.alpha = 0.6;
+        [UIView animateWithDuration:0.12 animations:^{ sender.alpha = 1.0; }];
+        PBRSubmitNativeSignal(@"tradingMessage", trimmed);
+    }
+}
+
+- (void)revivalAcceptOverlayPressed:(UIButton *)sender {
+    sender.userInteractionEnabled = NO;
+    PBRSubmitNativeFallback(@"accept");
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ sender.userInteractionEnabled = YES; });
+}
+
+- (void)revivalCancelOverlayPressed:(UIButton *)sender {
+    PBRRestoreLocalReadyUI();
+    PBRSubmitNativeFallback(@"makeChanges");
+}
+
+- (void)revivalMakeChangesOverlayPressed:(UIButton *)sender {
+    PBRRestoreLocalReadyUI();
+    PBRSubmitNativeFallback(@"makeChanges");
+}
+
 - (void)codeSearchTapped:(UITapGestureRecognizer *)gesture {
     id receiver = [objc_getAssociatedObject(gesture, &PBRGestureControllerKey) nonretainedObjectValue];
     if (!receiver || !PBROriginalCodeSearch) return;

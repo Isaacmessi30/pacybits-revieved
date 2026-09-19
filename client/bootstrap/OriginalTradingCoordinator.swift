@@ -669,6 +669,8 @@ final class OriginalTradingCoordinator {
                 nativeSettlementStarted = true
                 do {
                     try ledger.reconcile(response)
+                    // A zero-offer completed trade can reconcile as a no-op. It is
+                    // still a valid completed room and must close deterministically.
                     PBRResetOriginalTradeState()
                     finishSuccessfully(returnToTradingMenu: true)
                 } catch {

@@ -865,6 +865,40 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
     PBRSubmitNativeFallback(@"makeChanges");
 }
 
+- (void)revivalCompleteDialogTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
+    UIView *dialog = gesture.view;
+    if (!dialog) return;
+
+    UIView *accept = nil;
+    UIView *cancel = nil;
+    @try {
+        accept = [dialog valueForKey:@"acceptButton"];
+        cancel = [dialog valueForKey:@"cancelButton"];
+    } @catch (NSException *ignored) {}
+
+    CGPoint point = [gesture locationInView:dialog];
+    if (accept) {
+        CGRect rect = [accept convertRect:accept.bounds toView:dialog];
+        rect = CGRectInset(rect, -18.0, -14.0);
+        if (CGRectContainsPoint(rect, point)) {
+            PBRHealthBeacon(@"dialog-level-accept");
+            PBRSubmitNativeFallback(@"accept");
+            return;
+        }
+    }
+    if (cancel) {
+        CGRect rect = [cancel convertRect:cancel.bounds toView:dialog];
+        rect = CGRectInset(rect, -18.0, -14.0);
+        if (CGRectContainsPoint(rect, point)) {
+            PBRHealthBeacon(@"dialog-level-cancel");
+            PBRRestoreLocalReadyUI();
+            PBRSubmitNativeFallback(@"makeChanges");
+            return;
+        }
+    }
+}
+
 - (void)revivalMakeChangesTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded) return;
     id view = gesture.view;

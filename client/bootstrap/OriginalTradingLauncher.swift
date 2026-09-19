@@ -65,6 +65,11 @@ final class OriginalTradingLauncher: NSObject {
         OriginalTradingCoordinator.saveNativeWishlist(value: value)
     }
 
+    @objc(syncNativeOfferNow)
+    static func syncNativeOfferNow() {
+        OriginalTradingCoordinator.syncNativeOfferNow()
+    }
+
     @objc(submitNativeSignal:value:)
     static func submitNativeSignal(_ type: String, value: Any?) {
         OriginalTradingCoordinator.submitNativeSignal(type: type, value: value)

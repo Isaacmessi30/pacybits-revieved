@@ -80,6 +80,21 @@ final class OriginalTradingLauncher: NSObject {
         OriginalTradingCoordinator.submitNativeSignal(type: type, value: value)
     }
 
+    @objc(submitNativePicked:cardID:)
+    static func submitNativePicked(_ slot: Int, cardID: String) {
+        OriginalTradingCoordinator.submitNativePicked(slot: slot, cardID: cardID)
+    }
+
+    @objc(submitNativeDeleted:)
+    static func submitNativeDeleted(_ slot: Int) {
+        OriginalTradingCoordinator.submitNativeDeleted(slot: slot)
+    }
+
+    @objc(submitNativeCoins:)
+    static func submitNativeCoins(_ coins: Int) {
+        OriginalTradingCoordinator.submitNativeCoins(coins)
+    }
+
     @objc(submitNativeFallback:)
     static func submitNativeFallback(_ name: String) {
         OriginalTradingCoordinator.submitNativeFallback(name)

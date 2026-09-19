@@ -57,7 +57,9 @@ struct OriginalTradePeerState: Equatable {
         }
         if oldOffer.coins != offer.coins { events.append(.coins(offer.coins)) }
         if ready && (previous?.ready != true || revisionChanged) { events.append(.ready) }
-        if accepted && (previous?.accepted != true || revisionChanged) { events.append(.accept) }
+        // Do not render the peer's Accept into PACYBITS before the room is
+        // actually completed. The old client turns that event into its retired
+        // GameKit completion screen. Backend completion is authoritative.
         return events
     }
 }

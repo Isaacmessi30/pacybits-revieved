@@ -105,6 +105,7 @@ static IMP PBROriginalCoinsConfirmTap = NULL;
 static IMP PBROriginalMessageReturn = NULL;
 static IMP PBROriginalMessageDidMoveToWindow = NULL;
 static IMP PBROriginalTradingCardDeleteTap = NULL;
+static IMP PBROriginalCompleteTradeDidMoveToWindow = NULL;
 static IMP PBROriginalCompleteTradeDidMove = NULL;
 static IMP PBROriginalConfirmButtonDidMove = NULL;
 static NSInteger PBRPendingLocalOfferSlot = NSNotFound;
@@ -139,6 +140,7 @@ static BOOL PBRCoinsConfirmHooked = NO;
 static BOOL PBRMessageReturnHooked = NO;
 static BOOL PBRMessageDidMoveHooked = NO;
 static BOOL PBRTradingCardDeleteHooked = NO;
+static BOOL PBRCompleteTradeDidMoveHooked = NO;
 static BOOL PBRCompleteTradeDidMoveHooked = NO;
 static BOOL PBRConfirmButtonDidMoveHooked = NO;
 
@@ -1437,6 +1439,9 @@ static void PBRInstallRevivalHooks(void) {
                              (IMP)PBRTradingAcceptTap, &PBROriginalTradeAcceptTap, &PBRTradeAcceptHooked);
     PBRInstallMethodHookOnce(completeTrade, NSSelectorFromString(@"cancelTapHandlerWithGesture:"),
                              (IMP)PBRTradingCancelAcceptTap, &PBROriginalTradeCancelAcceptTap, &PBRTradeCancelAcceptHooked);
+    PBRInstallMethodHookOnce(completeTrade, NSSelectorFromString(@"didMoveToWindow"),
+                             (IMP)PBRCompleteTradeDidMoveToWindow,
+                             &PBROriginalCompleteTradeDidMoveToWindow, &PBRCompleteTradeDidMoveHooked);
     PBRInstallMethodHookOnce(completeTrade, NSSelectorFromString(@"didMoveToWindow"),
                              (IMP)PBRCompleteTradeDidMoveToWindow,
                              &PBROriginalCompleteTradeDidMove, &PBRCompleteTradeDidMoveHooked);

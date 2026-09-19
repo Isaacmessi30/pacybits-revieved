@@ -101,7 +101,10 @@ static IMP PBROriginalDuplicatesDidSelect = NULL;
 static IMP PBROriginalCoinsConfirmTap = NULL;
 static IMP PBROriginalMessageReturn = NULL;
 static IMP PBROriginalMessageDidMoveToWindow = NULL;
+static IMP PBROriginalTradingCardDeleteTap = NULL;
 static NSInteger PBRPendingLocalOfferSlot = NSNotFound;
+static NSMutableDictionary<NSNumber *, NSString *> *PBRTrackedOfferCards = nil;
+static NSInteger PBRTrackedOfferCoins = 0;
 static NSMutableArray<NSString *> *PBRCachedWishlistIdentifiers = nil;
 static UIViewController *PBRLastTradingMenuController = nil;
 static __weak UINavigationController *PBRLastTradingNavigationController = nil;
@@ -130,6 +133,7 @@ static BOOL PBRDuplicatesSelectHooked = NO;
 static BOOL PBRCoinsConfirmHooked = NO;
 static BOOL PBRMessageReturnHooked = NO;
 static BOOL PBRMessageDidMoveHooked = NO;
+static BOOL PBRTradingCardDeleteHooked = NO;
 
 static char PBRButtonWiredKey;
 static char PBRGestureControllerKey;
@@ -233,6 +237,32 @@ static void PBRNavigateOriginalRoute(NSString *route) {
         ((void (*)(id, SEL, NSString *))objc_msgSend)(launcher, sel, route);
     }
 }
+
+static void PBREnsureTrackedOffer(void) {
+    if (!PBRTrackedOfferCards) PBRTrackedOfferCards = [NSMutableDictionary dictionary];
+}
+
+static NSString *PBRIdentifierFromDuplicateCell(UICollectionView *collectionView, NSIndexPath *indexPath) {
+    id cell = [collectionView cellForItemAtIndexPath:indexPath];
+    NSString *identifier = PBRPlayerIdentifier(cell);
+    if (identifier.length) return identifier;
+    for (NSString *key in @[@"player", @"card", @"smallCard", @"playerObject", @"object"]) {
+        @try {
+            id value = [cell valueForKey:key];
+            identifier = PBRPlayerIdentifier(value);
+            if (identifier.length) return identifier;
+            for (NSString *nestedKey in @[@"player", @"card", @"object"]) {
+                @try {
+                    id nested = [value valueForKey:nestedKey];
+                    identifier = PBRPlayerIdentifier(nested);
+                    if (identifier.length) return identifier;
+                } @catch (NSException *ignored) {}
+            }
+        } @catch (NSException *ignored) {}
+    }
+    return nil;
+}
+
 
 
 
@@ -378,13 +408,22 @@ static void PBRInstallMessageButtonFallback(void) {
 }
 
 static void PBRTradingChatTap(id receiver, SEL selector, id gesture) {
+    if (PBRShouldInterceptTrading()) {
+        NSString *message = nil;
+        @try {
+            id label = [receiver valueForKey:@"messageLeft"];
+            if ([label respondsToSelector:@selector(text)]) message = [label text];
+        } @catch (NSException *ignored) {}
+        NSString *trimmed = [message stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (trimmed.length) {
+            PBRHealthBeacon(@"live-message-send");
+            PBRSubmitNativeSignal(@"tradingMessage", trimmed);
+            return;
+        }
+    }
     if (PBROriginalTradingChatTap) {
         ((void (*)(id, SEL, id))PBROriginalTradingChatTap)(receiver, selector, gesture);
     }
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ PBRInstallMessageButtonFallback(); });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.40 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ PBRInstallMessageButtonFallback(); });
 }
 
 
@@ -419,14 +458,45 @@ static void PBRTradingCardOutlineTap(id receiver, SEL selector, id gesture) {
     });
 }
 
+static void PBRTradingCardDeleteTap(id receiver, SEL selector, id gesture) {
+    NSInteger slot = NSNotFound;
+    @try {
+        UIViewController *trade = PBRCurrentOriginalTrading();
+        NSArray *left = [trade valueForKey:@"cardsLeft"];
+        if ([left isKindOfClass:NSArray.class]) {
+            NSUInteger found = [left indexOfObjectIdenticalTo:receiver];
+            if (found != NSNotFound && found < 3) slot = (NSInteger)found;
+        }
+    } @catch (NSException *ignored) {}
+
+    if (PBROriginalTradingCardDeleteTap) {
+        ((void (*)(id, SEL, id))PBROriginalTradingCardDeleteTap)(receiver, selector, gesture);
+    }
+    if (PBRShouldInterceptTrading() && slot != NSNotFound) {
+        PBREnsureTrackedOffer();
+        [PBRTrackedOfferCards removeObjectForKey:@(slot)];
+        PBRHealthBeacon(@"offer-card-deleted");
+        PBRSyncNativeOfferNow();
+    }
+}
+
 static void PBRDuplicatesDidSelect(id receiver, SEL selector, UICollectionView *collectionView, NSIndexPath *indexPath) {
+    NSString *selectedIdentifier = PBRIdentifierFromDuplicateCell(collectionView, indexPath);
+    NSInteger selectedSlot = PBRPendingLocalOfferSlot;
+
     if (PBROriginalDuplicatesDidSelect) {
         ((void (*)(id, SEL, UICollectionView *, NSIndexPath *))PBROriginalDuplicatesDidSelect)(
             receiver, selector, collectionView, indexPath);
     }
     if (!PBRShouldInterceptTrading() || PBRPendingLocalOfferSlot == NSNotFound) return;
 
-    PBRHealthBeacon(@"offer-card-selected");
+    PBREnsureTrackedOffer();
+    if (selectedSlot != NSNotFound && selectedIdentifier.length) {
+        PBRTrackedOfferCards[@(selectedSlot)] = selectedIdentifier;
+        PBRHealthBeacon(@"offer-card-selected");
+    } else {
+        PBRHealthBeacon(@"offer-card-selected-id-missing");
+    }
     // PACYBITS' original selection callback owns populating the remembered
     // TradingCard slot and returning to Trading. Resync after that callback has
     // had time to restore the original screen.
@@ -461,6 +531,15 @@ static void PBRTradingCoinsConfirmTap(id receiver, SEL selector, id gesture) {
     }
     if (!PBRShouldInterceptTrading()) return;
 
+    PBREnsureTrackedOffer();
+    NSMutableString *coinDigits = [NSMutableString string];
+    NSCharacterSet *decimal = NSCharacterSet.decimalDigitCharacterSet;
+    for (NSUInteger i = 0; i < value.length; i++) {
+        unichar ch = [value characterAtIndex:i];
+        if ([decimal characterIsMember:ch]) [coinDigits appendFormat:@"%C", ch];
+    }
+    long long parsedCoins = coinDigits.longLongValue;
+    PBRTrackedOfferCoins = (parsedCoins >= 0 && parsedCoins <= NSIntegerMax) ? (NSInteger)parsedCoins : 0;
     PBRHealthBeacon(value.length ? @"offer-coins-confirm" : @"offer-coins-empty");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ PBRSyncNativeOfferNow(); });
@@ -1222,6 +1301,8 @@ static void PBRInstallRevivalHooks(void) {
     Class tradingCard = NSClassFromString(@"_TtC13PACYBITSFUT2011TradingCard");
     PBRInstallMethodHookOnce(tradingCard, NSSelectorFromString(@"outlineTapHandlerWithGesture:"),
                              (IMP)PBRTradingCardOutlineTap, &PBROriginalTradingCardOutlineTap, &PBRTradingCardOutlineHooked);
+    PBRInstallMethodHookOnce(tradingCard, NSSelectorFromString(@"deleteTapHandlerWithGesture:"),
+                             (IMP)PBRTradingCardDeleteTap, &PBROriginalTradingCardDeleteTap, &PBRTradingCardDeleteHooked);
 
     Class duplicatesVC = NSClassFromString(@"_TtC13PACYBITSFUT2024DuplicatesViewController");
     PBRInstallMethodHookOnce(duplicatesVC, NSSelectorFromString(@"collectionView:didSelectItemAtIndexPath:"),
@@ -1292,7 +1373,7 @@ static void PBRScheduleHookInstallation(void) {
                                   PBRTradeLeaveHooked && PBRTradingChatHooked &&
                                   PBRTradingCardOutlineHooked && PBRDuplicatesSelectHooked &&
                                   PBRCoinsConfirmHooked && PBRMessageReturnHooked &&
-                                  PBRMessageDidMoveHooked;
+                                  PBRMessageDidMoveHooked && PBRTradingCardDeleteHooked;
         if (!criticalHooksReady) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
@@ -1484,6 +1565,8 @@ void PBRResetOriginalTradeState(void) {
             @try { [[controller valueForKey:@"messageLeft"] setText:@""]; } @catch (NSException *ignored) {}
             @try { [[controller valueForKey:@"messageRight"] setText:@""]; } @catch (NSException *ignored) {}
             PBRPendingLocalOfferSlot = NSNotFound;
+            PBRTrackedOfferCards = [NSMutableDictionary dictionary];
+            PBRTrackedOfferCoins = 0;
             PBRHealthBeacon(@"trade-ui-reset");
         } @catch (NSException *exception) {
             PBRHealthBeacon(@"trade-ui-reset-failed");
@@ -1733,6 +1816,20 @@ NSArray<NSString *> *PBRCurrentWishlistIdentifiers(void) {
 
 NSDictionary *PBRCurrentLocalOfferSnapshot(void) {
     @try {
+        PBREnsureTrackedOffer();
+        NSMutableArray<NSString *> *trackedCards = [NSMutableArray array];
+        NSMutableArray<NSNumber *> *trackedSlots = [NSMutableArray array];
+        for (NSInteger slot = 0; slot < 3; slot++) {
+            NSString *identifier = PBRTrackedOfferCards[@(slot)];
+            if (identifier.length) {
+                [trackedCards addObject:identifier];
+                [trackedSlots addObject:@(slot)];
+            }
+        }
+        if (trackedCards.count || PBRTrackedOfferCoins > 0) {
+            return @{@"coins": @(PBRTrackedOfferCoins), @"cards": trackedCards, @"slots": trackedSlots};
+        }
+
         UIViewController *controller = PBRCurrentOriginalTrading();
         if (!controller) return @{@"coins": @0, @"cards": @[], @"slots": @[]};
 

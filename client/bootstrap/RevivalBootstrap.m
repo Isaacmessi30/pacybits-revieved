@@ -141,7 +141,6 @@ static BOOL PBRMessageReturnHooked = NO;
 static BOOL PBRMessageDidMoveHooked = NO;
 static BOOL PBRTradingCardDeleteHooked = NO;
 static BOOL PBRCompleteTradeDidMoveHooked = NO;
-static BOOL PBRCompleteTradeDidMoveHooked = NO;
 static BOOL PBRConfirmButtonDidMoveHooked = NO;
 
 static char PBRButtonWiredKey;

@@ -383,6 +383,16 @@ static void PBRDuplicatesDidSelect(id receiver, SEL selector, UICollectionView *
                    dispatch_get_main_queue(), ^{ PBRSyncNativeOfferNow(); });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
+        // Some retired GameKit paths remember the selected player but fail to
+        // navigate back from Duplicates. Re-enter PACYBITS' original Trading
+        // route so viewWillAppear can restore the pending selected slot.
+        if (!PBRCurrentOriginalTrading()) {
+            PBRHealthBeacon(@"offer-card-return-trading");
+            PBRNavigateOriginalRoute(@"trading");
+        }
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.80 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
         PBRSyncNativeOfferNow();
         PBRPendingLocalOfferSlot = NSNotFound;
     });
@@ -402,6 +412,8 @@ static void PBRTradingCoinsConfirmTap(id receiver, SEL selector, id gesture) {
 
     PBRHealthBeacon(value.length ? @"offer-coins-confirm" : @"offer-coins-empty");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ PBRSyncNativeOfferNow(); });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.40 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ PBRSyncNativeOfferNow(); });
 }
 

@@ -10,6 +10,8 @@ void PBRShowBackendPlayerFound(void);
 void PBRHideBackendMatchLoading(void);
 void PBRResetOriginalTradeState(void);
 void PBRReturnToTradingMenu(void);
+void PBRShowRevivalCompleteTradeDialog(void);
+void PBRHideRevivalCompleteTradeDialog(void);
 UIViewController * _Nullable PBRCurrentOriginalTrading(void);
 UIViewController * _Nullable PBRPresentOriginalTradingFallback(void);
 

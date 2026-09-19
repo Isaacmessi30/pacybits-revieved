@@ -100,6 +100,7 @@ static IMP PBROriginalTradingCardOutlineTap = NULL;
 static IMP PBROriginalDuplicatesDidSelect = NULL;
 static IMP PBROriginalCoinsConfirmTap = NULL;
 static IMP PBROriginalMessageReturn = NULL;
+static IMP PBROriginalMessageDidMoveToWindow = NULL;
 static NSInteger PBRPendingLocalOfferSlot = NSNotFound;
 static NSMutableArray<NSString *> *PBRCachedWishlistIdentifiers = nil;
 static UIViewController *PBRLastTradingMenuController = nil;
@@ -128,6 +129,7 @@ static BOOL PBRTradingCardOutlineHooked = NO;
 static BOOL PBRDuplicatesSelectHooked = NO;
 static BOOL PBRCoinsConfirmHooked = NO;
 static BOOL PBRMessageReturnHooked = NO;
+static BOOL PBRMessageDidMoveHooked = NO;
 
 static char PBRButtonWiredKey;
 static char PBRGestureControllerKey;
@@ -231,19 +233,66 @@ static void PBRNavigateOriginalRoute(NSString *route) {
 }
 
 
+
+static void PBRRestoreLocalReadyUI(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            UIViewController *trade = PBRRawOriginalTrading();
+            if (!trade) return;
+            id confirm = [trade valueForKey:@"confirmButton"];
+            if (confirm) {
+                @try { [confirm setValue:@NO forKey:@"isConfirmed"]; } @catch (NSException *ignored) {}
+                @try { [confirm setUserInteractionEnabled:YES]; } @catch (NSException *ignored) {}
+                @try {
+                    NSLayoutConstraint *constraint = [confirm valueForKey:@"dragConstraint"];
+                    if ([constraint isKindOfClass:NSLayoutConstraint.class]) constraint.constant = 0.0;
+                } @catch (NSException *ignored) {}
+                @try { [confirm setNeedsLayout]; [confirm layoutIfNeeded]; } @catch (NSException *ignored) {}
+            }
+
+            Class completeClass = NSClassFromString(@"_TtC13PACYBITSFUT2026DialogTradingCompleteTrade");
+            UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
+            UIView *dialog = PBRFindViewOfClass(window, completeClass);
+            if (dialog) {
+                [dialog removeFromSuperview];
+                PBRHealthBeacon(@"ready-cancel-dialog-removed");
+            }
+            PBRHealthBeacon(@"ready-cancel-ui-restored");
+        } @catch (NSException *exception) {
+            PBRHealthBeacon(@"ready-cancel-ui-failed");
+        }
+    });
+}
+
+static void PBRTradingMessageDidMoveToWindow(id receiver, SEL selector) {
+    if (PBROriginalMessageDidMoveToWindow) {
+        ((void (*)(id, SEL))PBROriginalMessageDidMoveToWindow)(receiver, selector);
+    }
+    if (![receiver window]) return;
+    @try {
+        id field = [receiver valueForKey:@"textField"];
+        id button = [receiver valueForKey:@"button"];
+        [field setUserInteractionEnabled:YES];
+        [button setUserInteractionEnabled:YES];
+    } @catch (NSException *ignored) {}
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.03 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ PBRInstallMessageButtonFallback(); });
+    PBRHealthBeacon(@"message-dialog-visible");
+}
+
 static void PBRTradingMessageDoneTap(id receiver, SEL selector, id gesture) {
     NSString *message = nil;
     @try {
         id field = [receiver valueForKey:@"textField"];
         if ([field respondsToSelector:@selector(text)]) message = [field text];
     } @catch (NSException *ignored) {}
-    if (PBROriginalMessageDoneTap) {
-        ((void (*)(id, SEL, id))PBROriginalMessageDoneTap)(receiver, selector, gesture);
-    }
     NSString *trimmed = [message stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (PBRShouldInterceptTrading() && trimmed.length) {
+    if (trimmed.length) {
         PBRHealthBeacon(@"fallback-message");
         PBRSubmitNativeSignal(@"tradingDidSetMessage", trimmed);
+    }
+    if (PBROriginalMessageDoneTap) {
+        ((void (*)(id, SEL, id))PBROriginalMessageDoneTap)(receiver, selector, gesture);
     }
 }
 
@@ -423,7 +472,7 @@ static BOOL PBRTradingMessageReturn(id receiver, SEL selector, UITextField *fiel
     if (PBROriginalMessageReturn) {
         result = ((BOOL (*)(id, SEL, UITextField *))PBROriginalMessageReturn)(receiver, selector, field);
     }
-    if (PBRShouldInterceptTrading() && message.length) {
+    if (message.length) {
         PBRHealthBeacon(@"fallback-message-return");
         PBRSubmitNativeSignal(@"tradingDidSetMessage", message);
     }
@@ -612,7 +661,7 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
 }
 - (void)tradingMessageFallbackTapped:(UITapGestureRecognizer *)gesture {
     id dialog = [objc_getAssociatedObject(gesture, &PBRMessageDialogAssociationKey) nonretainedObjectValue];
-    if (!dialog || !PBRShouldInterceptTrading()) return;
+    if (!dialog) return;
     NSString *message = nil;
     @try {
         id field = [dialog valueForKey:@"textField"];
@@ -896,24 +945,39 @@ static void PBRTradingReadyPan(id receiver, SEL selector, id sender) {
 }
 
 static void PBRTradingAcceptTap(id receiver, SEL selector, id gesture) {
+    if (PBRShouldInterceptTrading()) {
+        PBRHealthBeacon(@"fallback-accept");
+        PBRSubmitNativeFallback(@"accept");
+        return;
+    }
     if (PBROriginalTradeAcceptTap) {
         ((void (*)(id, SEL, id))PBROriginalTradeAcceptTap)(receiver, selector, gesture);
     }
-    if (PBRShouldInterceptTrading()) PBRSubmitNativeFallback(@"accept");
 }
 
 static void PBRTradingMakeChangesTap(id receiver, SEL selector, id gesture) {
+    if (PBRShouldInterceptTrading()) {
+        PBRHealthBeacon(@"fallback-make-changes");
+        PBRRestoreLocalReadyUI();
+        PBRSubmitNativeFallback(@"makeChanges");
+        return;
+    }
     if (PBROriginalTradeMakeChangesTap) {
         ((void (*)(id, SEL, id))PBROriginalTradeMakeChangesTap)(receiver, selector, gesture);
     }
-    if (PBRShouldInterceptTrading()) PBRSubmitNativeFallback(@"makeChanges");
 }
 
 static void PBRTradingCancelAcceptTap(id receiver, SEL selector, id gesture) {
+    if (PBRShouldInterceptTrading()) {
+        // User means "cancel my Ready/Accept", not leave the room.
+        PBRHealthBeacon(@"fallback-cancel-ready");
+        PBRRestoreLocalReadyUI();
+        PBRSubmitNativeFallback(@"makeChanges");
+        return;
+    }
     if (PBROriginalTradeCancelAcceptTap) {
         ((void (*)(id, SEL, id))PBROriginalTradeCancelAcceptTap)(receiver, selector, gesture);
     }
-    if (PBRShouldInterceptTrading()) PBRSubmitNativeFallback(@"cancelAcceptance");
 }
 
 
@@ -1174,6 +1238,9 @@ static void PBRInstallRevivalHooks(void) {
                              (IMP)PBRTradingMessageDoneTap, &PBROriginalMessageDoneTap, &PBRMessageDoneHooked);
     PBRInstallMethodHookOnce(messageDialog, NSSelectorFromString(@"textFieldShouldReturn:"),
                              (IMP)PBRTradingMessageReturn, &PBROriginalMessageReturn, &PBRMessageReturnHooked);
+    PBRInstallMethodHookOnce(messageDialog, NSSelectorFromString(@"didMoveToWindow"),
+                             (IMP)PBRTradingMessageDidMoveToWindow,
+                             &PBROriginalMessageDidMoveToWindow, &PBRMessageDidMoveHooked);
 
     Class wishlistDialog = NSClassFromString(@"_TtC13PACYBITSFUT2021DialogTradingWishlist");
     PBRInstallMethodHookOnce(wishlistDialog, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
@@ -1222,7 +1289,8 @@ static void PBRScheduleHookInstallation(void) {
                                   PBRTradeMakeChangesHooked && PBRTradeCancelAcceptHooked &&
                                   PBRTradeLeaveHooked && PBRTradingChatHooked &&
                                   PBRTradingCardOutlineHooked && PBRDuplicatesSelectHooked &&
-                                  PBRCoinsConfirmHooked && PBRMessageReturnHooked;
+                                  PBRCoinsConfirmHooked && PBRMessageReturnHooked &&
+                                  PBRMessageDidMoveHooked;
         if (!criticalHooksReady) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{

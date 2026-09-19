@@ -1365,24 +1365,55 @@ void PBRResetOriginalTradeState(void) {
             UIViewController *controller = PBRRawOriginalTrading();
             if (!controller) return;
 
+            // Clear the long-lived controller's internal trade lifecycle. These
+            // Swift ivars survive route changes and were causing the next trade
+            // to reopen with the previous card and disabled controls.
+            for (NSString *key in @[@"isReadyLeft", @"isReadyRight", @"isTradeComplete",
+                                    @"isCompletingTrade", @"isSentHandshake",
+                                    @"isReceivedHandshake", @"isSentTradeAgain",
+                                    @"isReceivedTradeAgain", @"isRated", @"showedAd"]) {
+                @try { [controller setValue:@NO forKey:key]; } @catch (NSException *ignored) {}
+            }
+            @try { [controller setValue:nil forKey:@"clickedCard"]; } @catch (NSException *ignored) {}
+            @try { [controller setValue:@[] forKey:@"leftIds"]; } @catch (NSException *ignored) {}
+
             for (NSString *key in @[@"cardsLeft", @"cardsRight"]) {
                 id cards = [controller valueForKey:key];
                 if ([cards isKindOfClass:NSArray.class]) {
                     for (id slot in (NSArray *)cards) {
                         @try { [slot setValue:nil forKey:@"card"]; } @catch (NSException *ignored) {}
+                        @try { [slot setUserInteractionEnabled:YES]; } @catch (NSException *ignored) {}
+                        @try { [[slot valueForKey:@"outline"] setHidden:NO]; } @catch (NSException *ignored) {}
                         @try { [[slot valueForKey:@"deleteButton"] setHidden:YES]; } @catch (NSException *ignored) {}
                         @try { [[slot valueForKey:@"newSign"] setHidden:YES]; } @catch (NSException *ignored) {}
+                        @try { [[slot valueForKey:@"loading"] stopAnimating]; } @catch (NSException *ignored) {}
                     }
                 }
             }
+
             for (NSString *key in @[@"coinsButtonLeft", @"coinsButtonRight"]) {
                 id button = [controller valueForKey:key];
+                @try { [button setUserInteractionEnabled:YES]; } @catch (NSException *ignored) {}
                 id textField = nil;
                 @try { textField = [button valueForKey:@"textField"]; } @catch (NSException *ignored) {}
                 if ([textField respondsToSelector:@selector(setText:)]) [textField setText:@""];
+                @try { [textField setUserInteractionEnabled:YES]; } @catch (NSException *ignored) {}
             }
+
+            for (NSString *key in @[@"wishlistButton", @"chatButton", @"coinsButton", @"confirmButton", @"mainArea"]) {
+                id view = nil;
+                @try { view = [controller valueForKey:key]; } @catch (NSException *ignored) {}
+                @try { [view setUserInteractionEnabled:YES]; } @catch (NSException *ignored) {}
+                @try { [view setAlpha:1.0]; } @catch (NSException *ignored) {}
+            }
+            id blocker = nil;
+            @try { blocker = [controller valueForKey:@"blockingView"]; } @catch (NSException *ignored) {}
+            @try { [blocker setHidden:YES]; } @catch (NSException *ignored) {}
+            @try { [blocker setUserInteractionEnabled:NO]; } @catch (NSException *ignored) {}
+
             @try { [[controller valueForKey:@"messageLeft"] setText:@""]; } @catch (NSException *ignored) {}
             @try { [[controller valueForKey:@"messageRight"] setText:@""]; } @catch (NSException *ignored) {}
+            PBRPendingLocalOfferSlot = NSNotFound;
             PBRHealthBeacon(@"trade-ui-reset");
         } @catch (NSException *exception) {
             PBRHealthBeacon(@"trade-ui-reset-failed");
@@ -1644,11 +1675,13 @@ NSDictionary *PBRCurrentLocalOfferSnapshot(void) {
             for (id tradingCard in (NSArray *)rawCards) {
                 if (slot >= 3) break;
                 id smallCard = nil;
-                id player = nil;
                 @try { smallCard = [tradingCard valueForKey:@"card"]; } @catch (NSException *ignored) {}
-                @try { player = [smallCard valueForKey:@"player"]; } @catch (NSException *ignored) {}
-                NSString *identifier = PBRPlayerIdentifier(player);
-                if (identifier.length && PBRPlayerForIdentifier(identifier)) {
+                NSString *identifier = PBRPlayerIdentifier(smallCard);
+                if (!identifier.length) {
+                    @try { identifier = PBRPlayerIdentifier([smallCard valueForKey:@"player"]); }
+                    @catch (NSException *ignored) {}
+                }
+                if (identifier.length) {
                     [cards addObject:identifier];
                     [slots addObject:@(slot)];
                 }

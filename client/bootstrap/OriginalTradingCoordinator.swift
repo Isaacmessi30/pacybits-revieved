@@ -141,6 +141,17 @@ final class OriginalTradingCoordinator {
         }
     }
 
+    static func syncNativeOfferNow() {
+        guard let current = active, !current.closed else { return }
+        Task { @MainActor in
+            do {
+                try await current.syncNativeOfferIfNeeded()
+            } catch {
+                current.showError(error)
+            }
+        }
+    }
+
     static func submitNativeSignal(type: String, value: Any?) {
         guard let current = active, !current.closed else { return }
         Task { @MainActor in

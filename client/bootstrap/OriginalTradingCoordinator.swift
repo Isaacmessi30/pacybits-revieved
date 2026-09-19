@@ -60,6 +60,8 @@ final class OriginalTradingCoordinator {
     private var lastWishlistSignature: String?
     private var lastNativeOfferSignature: String?
     private var localOfferLocked = false
+    private var localReadyInFlight = false
+    private var localConfirmInFlight = false
     private var lastOutboundActionName: String?
     private var lastOutboundActionAt = Date.distantPast
     private var closed = false
@@ -348,6 +350,8 @@ final class OriginalTradingCoordinator {
         peerState = try OriginalTradePeerState(room: room)
         isBotRoom = room.botPartner == true
         localOfferLocked = false
+        localReadyInFlight = false
+        localConfirmInFlight = false
         if let own = room.offers[room.selfKey] {
             lastNativeOfferSignature = Self.offerSignature(own)
         }
@@ -492,6 +496,21 @@ final class OriginalTradingCoordinator {
 
     private func submit(_ action: OriginalTradeAction) async {
         guard let session, !closed else { return }
+
+        if action == .ready {
+            guard !localReadyInFlight else { return }
+            localReadyInFlight = true
+        }
+        if action == .accept {
+            guard !localConfirmInFlight else { return }
+            localConfirmInFlight = true
+        }
+
+        defer {
+            if action == .ready { localReadyInFlight = false }
+            if action == .accept { localConfirmInFlight = false }
+        }
+
         do {
             if action == .ready {
                 try await syncNativeOfferIfNeeded(force: true)
@@ -509,6 +528,15 @@ final class OriginalTradingCoordinator {
             }
             try process(response)
         } catch {
+            // Ready/confirm races are recovered from authoritative room state
+            // instead of showing a second alert or requiring another tap.
+            if action == .ready || action == .accept {
+                do {
+                    let refreshed = try await session.refresh()
+                    try process(refreshed)
+                    return
+                } catch {}
+            }
             showError(error)
             do { try process(try await session.refresh()) } catch {}
         }

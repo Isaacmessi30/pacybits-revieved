@@ -102,14 +102,21 @@ final class OriginalTradingScreen {
     /// empty trading-card slot uses with route "duplicates"; entering trading
     /// through route "trading" keeps the controller inside the original
     /// tab/navigation hierarchy instead of presenting it modally.
-    static func openOriginalTradingRoute() throws {
+    static func openOriginalRoute(_ route: String) throws {
+        guard ["trading", "duplicates"].contains(route) else {
+            throw RevivalFailure("Unsupported PACYBITS route.")
+        }
         let slide = _dyld_get_image_vmaddr_slide(0)
         guard let entry = UnsafeRawPointer(bitPattern: 0x1002bd8fc + slide) else {
             throw RevivalFailure("Unsupported PACYBITS navigation routine.")
         }
         typealias NativeRoute = @convention(thin) (String, Bool, Bool, Bool) -> Void
         let navigate = unsafeBitCast(entry, to: NativeRoute.self)
-        navigate("trading", false, false, false)
+        navigate(route, false, false, false)
+    }
+
+    static func openOriginalTradingRoute() throws {
+        try openOriginalRoute("trading")
     }
 
 

@@ -667,16 +667,12 @@ final class OriginalTradingCoordinator {
             guard let ledger else { throw TradingClientError.invalidResponse }
             if !nativeSettlementStarted {
                 nativeSettlementStarted = true
-                PBRHealthBeacon("settlement-start")
                 do {
                     try ledger.reconcile(response)
-                    PBRHealthBeacon("settlement-local-saved")
                     PBRResetOriginalTradeState()
                     finishSuccessfully(returnToTradingMenu: true)
-                    PBRHealthBeacon("settlement-finished")
                 } catch {
                     nativeSettlementStarted = false
-                    PBRHealthBeacon("settlement-failed")
                     throw error
                 }
             }

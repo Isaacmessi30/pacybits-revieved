@@ -621,11 +621,26 @@ final class OriginalTradingCoordinator {
             }
         }
         if room.isCompleted {
-            guard response.inventory != nil, (response.inventoryVersion ?? 0) > 0 else {
+            guard response.inventory != nil, (response.inventoryVersion ?? 0) > 0,
+                  let ledger else {
                 throw TradingClientError.invalidResponse
             }
-            completedReceipt = response
-            if let encoded = room.peerHandshake { try finishWithPeerHandshake(encoded) }
+
+            // The revival backend is authoritative for settlement. The original
+            // GameKit-era tradingHandshake may never arrive, so do not block a
+            // completed trade on it. Reconcile the server delta directly into
+            // PACYBITS' persisted collection, verify it, then leave the trade.
+            if !nativeSettlementStarted {
+                nativeSettlementStarted = true
+                do {
+                    try ledger.reconcile(response)
+                    completedReceipt = response
+                    finishSuccessfully(returnToTradingMenu: true)
+                } catch {
+                    nativeSettlementStarted = false
+                    throw error
+                }
+            }
         }
     }
 
@@ -738,14 +753,18 @@ final class OriginalTradingCoordinator {
         return dictionary
     }
 
-    private func finishSuccessfully() {
+    private func finishSuccessfully(returnToTradingMenu: Bool = false) {
         pollTask?.cancel(); pollTask = nil
+        matchmakingTask?.cancel(); matchmakingTask = nil
         LegacyOutboundBridge.handle = nil
         screen?.restoreProfile()
         session = nil
         completedReceipt = nil
         closed = true
         OriginalTradingCoordinator.active = nil
+        if returnToTradingMenu {
+            PBRReturnToTradingMenu()
+        }
     }
 
     private func showError(_ error: Error) {

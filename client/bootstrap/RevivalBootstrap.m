@@ -242,7 +242,16 @@ static void PBREnsureTrackedOffer(void) {
     if (!PBRTrackedOfferCards) PBRTrackedOfferCards = [NSMutableDictionary dictionary];
 }
 
-static NSString *PBRIdentifierFromDuplicateCell(UICollectionView *collectionView, NSIndexPath *indexPath) {
+static NSString *PBRIdentifierFromDuplicateSelection(id controller, UICollectionView *collectionView, NSIndexPath *indexPath) {
+    @try {
+        id players = [controller valueForKey:@"filteredPlayers"];
+        if ([players isKindOfClass:NSArray.class] && indexPath.item < [players count]) {
+            id player = [players objectAtIndex:indexPath.item];
+            NSString *identifier = PBRPlayerIdentifier(player);
+            if (identifier.length) return identifier;
+        }
+    } @catch (NSException *ignored) {}
+
     id cell = [collectionView cellForItemAtIndexPath:indexPath];
     NSString *identifier = PBRPlayerIdentifier(cell);
     if (identifier.length) return identifier;
@@ -251,13 +260,6 @@ static NSString *PBRIdentifierFromDuplicateCell(UICollectionView *collectionView
             id value = [cell valueForKey:key];
             identifier = PBRPlayerIdentifier(value);
             if (identifier.length) return identifier;
-            for (NSString *nestedKey in @[@"player", @"card", @"object"]) {
-                @try {
-                    id nested = [value valueForKey:nestedKey];
-                    identifier = PBRPlayerIdentifier(nested);
-                    if (identifier.length) return identifier;
-                } @catch (NSException *ignored) {}
-            }
         } @catch (NSException *ignored) {}
     }
     return nil;
@@ -481,7 +483,7 @@ static void PBRTradingCardDeleteTap(id receiver, SEL selector, id gesture) {
 }
 
 static void PBRDuplicatesDidSelect(id receiver, SEL selector, UICollectionView *collectionView, NSIndexPath *indexPath) {
-    NSString *selectedIdentifier = PBRIdentifierFromDuplicateCell(collectionView, indexPath);
+    NSString *selectedIdentifier = PBRIdentifierFromDuplicateSelection(receiver, collectionView, indexPath);
     NSInteger selectedSlot = PBRPendingLocalOfferSlot;
 
     if (PBROriginalDuplicatesDidSelect) {

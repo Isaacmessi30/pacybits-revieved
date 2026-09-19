@@ -70,6 +70,7 @@
 - (void)tradingMessageFallbackTapped:(UITapGestureRecognizer *)gesture;
 - (void)revivalAcceptTapped:(UITapGestureRecognizer *)gesture;
 - (void)revivalCancelTapped:(UITapGestureRecognizer *)gesture;
+- (void)revivalCompleteDialogTapped:(UITapGestureRecognizer *)gesture;
 - (void)revivalMakeChangesTapped:(UITapGestureRecognizer *)gesture;
 - (void)aboutSignInTapped:(UIButton *)sender;
 - (void)aboutSignOutTapped:(UIButton *)sender;
@@ -281,26 +282,26 @@ static void PBREnsureTrackedOffer(void) {
 }
 
 static NSString *PBRIdentifierFromDuplicateSelection(id controller, UICollectionView *collectionView, NSIndexPath *indexPath) {
+    // filteredPlayers is a real Swift ivar in the inspected PACYBITS binary
+    // (instance offset 208). Use the Objective-C runtime metadata rather than
+    // KVC, which is unreliable for this stored Swift field.
     @try {
-        id players = [controller valueForKey:@"filteredPlayers"];
+        Ivar ivar = class_getInstanceVariable(object_getClass(controller) ? [controller class] : Nil, "filteredPlayers");
+        if (!ivar) ivar = class_getInstanceVariable([controller class], "filteredPlayers");
+        id players = ivar ? object_getIvar(controller, ivar) : nil;
         if ([players isKindOfClass:NSArray.class] && indexPath.item >= 0 &&
             (NSUInteger)indexPath.item < [(NSArray *)players count]) {
-            id player = [players objectAtIndex:indexPath.item];
+            id player = [(NSArray *)players objectAtIndex:(NSUInteger)indexPath.item];
             NSString *identifier = PBRPlayerIdentifier(player);
             if (identifier.length) return identifier;
         }
     } @catch (NSException *ignored) {}
 
+    // CellDuplicate.card is only a visual CardSmall; keep it as a fallback for
+    // diagnostics, but the model array above is authoritative for the ID.
     id cell = [collectionView cellForItemAtIndexPath:indexPath];
     NSString *identifier = PBRPlayerIdentifier(cell);
     if (identifier.length) return identifier;
-    for (NSString *key in @[@"player", @"card", @"smallCard", @"playerObject", @"object"]) {
-        @try {
-            id value = [cell valueForKey:key];
-            identifier = PBRPlayerIdentifier(value);
-            if (identifier.length) return identifier;
-        } @catch (NSException *ignored) {}
-    }
     return nil;
 }
 
@@ -331,6 +332,18 @@ static void PBRCompleteTradeDidMoveToWindow(id receiver, SEL selector) {
         UIView *cancel = [receiver valueForKey:@"cancelButton"];
         PBRReplaceTapGestures(accept, [PBRRevivalBootstrap shared], @selector(revivalAcceptTapped:));
         PBRReplaceTapGestures(cancel, [PBRRevivalBootstrap shared], @selector(revivalCancelTapped:));
+
+        // Also own the whole dialog hit-test. PACYBITS' nested gesture hierarchy
+        // can swallow taps before they reach acceptButton/cancelButton.
+        static const void *PBRCompleteDialogTapKey = &PBRCompleteDialogTapKey;
+        if (!objc_getAssociatedObject(receiver, PBRCompleteDialogTapKey)) {
+            UITapGestureRecognizer *dialogTap = [[UITapGestureRecognizer alloc]
+                initWithTarget:[PBRRevivalBootstrap shared]
+                        action:@selector(revivalCompleteDialogTapped:)];
+            dialogTap.cancelsTouchesInView = NO;
+            [receiver addGestureRecognizer:dialogTap];
+            objc_setAssociatedObject(receiver, PBRCompleteDialogTapKey, dialogTap, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
         PBRHealthBeacon(@"complete-dialog-direct-controls");
     } @catch (NSException *ignored) {}
 }

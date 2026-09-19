@@ -230,23 +230,8 @@ export class AuthenticatedRandomBot {
     const fresh = current;
     if (fresh.status !== 'open') { await sleep(1400); return; }
 
-    // Acknowledge the latest peer trading message once. This uses the same
-    // authenticated signal channel as a normal client, making live message
-    // delivery visible during bot tests.
-    const peerSignals = Array.isArray(fresh.signals?.[peer]) ? fresh.signals[peer] : [];
-    const latestMessage = [...peerSignals].reverse().find((entry) => entry?.type === 'tradingMessage');
-    if (latestMessage && latestMessage.seq !== this.lastAckMessageSeq) {
-      this.lastAckMessageSeq = latestMessage.seq;
-      await this.call({
-        action: 'signal',
-        roomId: fresh.id,
-        signalType: 'tradingMessage',
-        signalPayload: latestMessage.payload
-      });
-      this.log(JSON.stringify({ event: 'authBot', status: 'messageAck', room: fresh.id }));
-      await sleep(250);
-      return;
-    }
+    // Trading messages/status text belong to the sender. The bot must not
+    // mirror the peer's text back as its own status/message.
 
     if (fresh.ready?.[self] !== fresh.revision) {
       await this.call({ action: 'ready', roomId: fresh.id, revision: fresh.revision });

@@ -238,7 +238,7 @@ export class AuthenticatedRandomBot {
     }
 
     if (fresh.ready?.[peer] === fresh.revision && fresh.ready?.[self] === fresh.revision &&
-        fresh.confirmed?.[peer] === fresh.revision && fresh.confirmed?.[self] !== fresh.revision) {
+        fresh.confirmed?.[self] !== fresh.revision) {
       await this.call({ action: 'confirm', roomId: fresh.id, revision: fresh.revision });
       this.log(JSON.stringify({ event: 'authBot', status: 'confirmed', room: fresh.id }));
       await sleep(700);

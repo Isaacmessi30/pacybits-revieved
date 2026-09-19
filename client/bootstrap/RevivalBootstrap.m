@@ -1917,12 +1917,17 @@ void PBRShowRevivalCompleteTradeDialog(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         @try {
             UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
-            if (!window) return;
+            if (!window) {
+                PBRHealthBeacon(@"complete-dialog-no-window");
+                return;
+            }
 
-            if (PBRCompleteTradeNibRoot && PBRCompleteTradeNibRoot.window) {
+            if (PBRCompleteTradeNibRoot && PBRCompleteTradeNibRoot.window == window) {
+                PBRCompleteTradeNibRoot.hidden = NO;
                 PBRCompleteTradeNibRoot.userInteractionEnabled = YES;
                 [window bringSubviewToFront:PBRCompleteTradeNibRoot];
                 PBRRefreshTradeControlOverlays();
+                PBRHealthBeacon(@"complete-dialog-existing-front");
                 return;
             }
 
@@ -1932,62 +1937,92 @@ void PBRShowRevivalCompleteTradeDialog(void) {
                 return;
             }
 
-            // DialogTradingCompleteTrade.nib uses DialogTradingCompleteTrade as
-            // File's Owner. Loading with owner:nil can never produce the owner
-            // class in the returned top-level objects.
-            id owner = [[completeClass alloc] init];
-            NSArray *objects = [[NSBundle mainBundle] loadNibNamed:@"DialogTradingCompleteTrade"
-                                                             owner:owner
-                                                           options:nil];
-
-            UIView *root = nil;
-            CGFloat bestArea = -1.0;
-            for (id object in objects) {
-                if (![object isKindOfClass:UIView.class]) continue;
-                UIView *candidate = (UIView *)object;
-                CGFloat area = candidate.bounds.size.width * candidate.bounds.size.height;
-                if (!root || area > bestArea) {
-                    root = candidate;
-                    bestArea = area;
-                }
-            }
-
-            UIView *accept = nil;
-            UIView *cancel = nil;
-            @try { accept = [owner valueForKey:@"acceptButton"]; } @catch (NSException *ignored) {}
-            @try { cancel = [owner valueForKey:@"cancelButton"]; } @catch (NSException *ignored) {}
-
-            if (!root || !accept || !cancel) {
-                PBRHealthBeacon(@"complete-dialog-owner-load-failed");
+            // Reproduce the original PACYBITS object lifecycle. The shipped
+            // binary allocates a real DialogTradingCompleteTrade UIView and then
+            // calls the inherited loadFromXibWithNamed: helper on that instance.
+            // Loading the nib with NSBundle/File's Owner is not equivalent.
+            UIView *dialog = [[completeClass alloc] initWithFrame:window.bounds];
+            if (![dialog isKindOfClass:UIView.class]) {
+                PBRHealthBeacon(@"complete-dialog-init-failed");
                 return;
             }
 
-            PBRCompleteTradeNibOwner = owner;
-            PBRCompleteTradeNibRoot = root;
-
-            root.frame = window.bounds;
-            root.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-            root.userInteractionEnabled = YES;
-            [window addSubview:root];
-            [window bringSubviewToFront:root];
-
-            // Make the original PACYBITS accept/cancel controls interactive even
-            // if their ancestor hierarchy was disabled by the retired GameKit flow.
-            UIView *cursor = accept;
-            while (cursor && cursor != root.superview) {
-                cursor.userInteractionEnabled = YES;
-                if (cursor == root) break;
-                cursor = cursor.superview;
-            }
-            cursor = cancel;
-            while (cursor && cursor != root.superview) {
-                cursor.userInteractionEnabled = YES;
-                if (cursor == root) break;
-                cursor = cursor.superview;
+            SEL loadSEL = NSSelectorFromString(@"loadFromXibWithNamed:");
+            if (![dialog respondsToSelector:loadSEL]) {
+                PBRHealthBeacon(@"complete-dialog-load-selector-missing");
+                return;
             }
 
-            PBRHealthBeacon(@"complete-dialog-owner-shown");
+            ((void (*)(id, SEL, id))objc_msgSend)(dialog, loadSEL, @"DialogTradingCompleteTrade");
+            PBRHealthBeacon(@"complete-dialog-xib-loaded");
+
+            UIView *accept = nil;
+            UIView *cancel = nil;
+            @try { accept = [dialog valueForKey:@"acceptButton"]; } @catch (NSException *ignored) {}
+            @try { cancel = [dialog valueForKey:@"cancelButton"]; } @catch (NSException *ignored) {}
+
+            if (![accept isKindOfClass:UIView.class] || ![cancel isKindOfClass:UIView.class]) {
+                PBRHealthBeacon(@"complete-dialog-outlets-missing");
+                return;
+            }
+
+            // Match PACYBITS' original zero-duration long-press controls. Our
+            // swizzled handlers route these to the revival backend, while the
+            // window overlays below provide a second deterministic tap path.
+            for (UIView *button in @[accept, cancel]) {
+                for (UIGestureRecognizer *g in [button.gestureRecognizers copy]) {
+                    [button removeGestureRecognizer:g];
+                }
+            }
+            UILongPressGestureRecognizer *acceptPress =
+                [[UILongPressGestureRecognizer alloc] initWithTarget:dialog
+                                                               action:NSSelectorFromString(@"acceptTapHandlerWithGesture:")];
+            acceptPress.minimumPressDuration = 0.0;
+            [accept addGestureRecognizer:acceptPress];
+
+            UILongPressGestureRecognizer *cancelPress =
+                [[UILongPressGestureRecognizer alloc] initWithTarget:dialog
+                                                               action:NSSelectorFromString(@"cancelTapHandlerWithGesture:")];
+            cancelPress.minimumPressDuration = 0.0;
+            [cancel addGestureRecognizer:cancelPress];
+
+            dialog.frame = window.bounds;
+            dialog.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            dialog.hidden = NO;
+            dialog.alpha = 1.0;
+            dialog.userInteractionEnabled = YES;
+            accept.hidden = NO;
+            cancel.hidden = NO;
+            accept.alpha = 1.0;
+            cancel.alpha = 1.0;
+            accept.userInteractionEnabled = YES;
+            cancel.userInteractionEnabled = YES;
+
+            [window addSubview:dialog];
+            [dialog setNeedsLayout];
+            [dialog layoutIfNeeded];
+            [window bringSubviewToFront:dialog];
+
+            PBRCompleteTradeNibOwner = dialog;
+            PBRCompleteTradeNibRoot = dialog;
             PBRRefreshTradeControlOverlays();
+
+            BOOL attached = (dialog.window == window && dialog.superview == window);
+            BOOL visible = !dialog.hidden && dialog.alpha > 0.01 &&
+                           !accept.hidden && accept.alpha > 0.01 &&
+                           !cancel.hidden && cancel.alpha > 0.01;
+            BOOL interactive = dialog.userInteractionEnabled &&
+                               accept.userInteractionEnabled &&
+                               cancel.userInteractionEnabled;
+            if (attached && visible && interactive) {
+                PBRHealthBeacon(@"complete-dialog-runtime-verified");
+            } else if (!attached) {
+                PBRHealthBeacon(@"complete-dialog-runtime-not-attached");
+            } else if (!visible) {
+                PBRHealthBeacon(@"complete-dialog-runtime-not-visible");
+            } else {
+                PBRHealthBeacon(@"complete-dialog-runtime-not-interactive");
+            }
         } @catch (NSException *exception) {
             PBRCompleteTradeNibOwner = nil;
             PBRCompleteTradeNibRoot = nil;

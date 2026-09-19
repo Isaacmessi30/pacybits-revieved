@@ -240,8 +240,8 @@ export class AuthenticatedRandomBot {
       await this.call({
         action: 'signal',
         roomId: fresh.id,
-        type: 'tradingMessage',
-        payload: latestMessage.payload
+        signalType: 'tradingMessage',
+        signalPayload: latestMessage.payload
       });
       this.log(JSON.stringify({ event: 'authBot', status: 'messageAck', room: fresh.id }));
       await sleep(250);

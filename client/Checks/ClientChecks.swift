@@ -147,7 +147,10 @@ struct ClientChecks {
                 try check(repeated.isEmpty, "Repeated poll replayed peer events")
                 let confirmed = try state(revision: 2, cards: ["cardB", "cardA"], ready: true, accepted: true)
                 let confirmation = try confirmed.events(after: new)
-                try check(confirmation == [.ready, .accept], "Confirmation skipped readiness or emitted handshake")
+                // Peer acceptance is intentionally not rendered into the legacy
+                // PACYBITS UI before the backend room reaches completed; doing so
+                // starts the retired GameKit completion spinner.
+                try check(confirmation == [.ready], "Peer confirmation should wait for backend completion")
                 let malformed = try state(revision: 2, cards: ["cardA", "cardB"])
                 do { _ = try malformed.events(after: new); throw CheckFailure.failed("Offer changed without a revision") }
                 catch TradingClientError.invalidResponse {}

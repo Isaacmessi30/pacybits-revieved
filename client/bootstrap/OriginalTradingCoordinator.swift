@@ -719,8 +719,14 @@ final class OriginalTradingCoordinator {
                 // The backend is authoritative for the Ready -> Accept boundary.
                 // PACYBITS' retired tradingReady receiver is deliberately not
                 // allowed to drive this transition anymore.
-                let bothReady = room.members.count == 2 &&
+                let serverBothReady = room.members.count == 2 &&
                     room.members.allSatisfy { room.ready[$0] == room.revision }
+
+                // localOfferLocked becomes true only after this client receives a
+                // successful Ready response. Combine that local fact with the
+                // authenticated peer Ready state so we cannot miss the original
+                // PACYBITS Accept/Cancel stage because of poll timing.
+                let bothReady = serverBothReady || (localOfferLocked && next.ready)
                 if bothReady {
                     try activeScreen.showCompletionPrompt()
                 } else {

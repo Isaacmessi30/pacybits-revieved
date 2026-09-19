@@ -162,6 +162,21 @@ final class OriginalTradingCoordinator {
         }
     }
 
+    static func submitNativePicked(slot: Int, cardID: String) {
+        guard let current = active, !current.closed, (0..<3).contains(slot), !cardID.isEmpty else { return }
+        Task { @MainActor in await current.submit(.picked(slot: slot, cardID: cardID)) }
+    }
+
+    static func submitNativeDeleted(slot: Int) {
+        guard let current = active, !current.closed, (0..<3).contains(slot) else { return }
+        Task { @MainActor in await current.submit(.deleted(slot: slot)) }
+    }
+
+    static func submitNativeCoins(_ coins: Int) {
+        guard let current = active, !current.closed, (0...1_000_000_000).contains(coins) else { return }
+        Task { @MainActor in await current.submit(.coins(coins)) }
+    }
+
     static func submitNativeFallback(_ name: String) {
         guard let current = active, !current.closed else { return }
         let action: OriginalTradeAction

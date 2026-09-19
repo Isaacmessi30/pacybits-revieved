@@ -65,6 +65,11 @@ final class OriginalTradingLauncher: NSObject {
         OriginalTradingCoordinator.saveNativeWishlist(value: value)
     }
 
+    @objc(openOriginalRoute:)
+    static func openOriginalRoute(_ route: String) {
+        try? OriginalTradingScreen.openOriginalRoute(route)
+    }
+
     @objc(syncNativeOfferNow)
     static func syncNativeOfferNow() {
         OriginalTradingCoordinator.syncNativeOfferNow()

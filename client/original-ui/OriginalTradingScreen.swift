@@ -224,14 +224,22 @@ final class OriginalTradingScreen {
                 guard (0...1_000_000_000).contains(amount) else { throw TradingClientError.invalidResponse }
                 messages.append(("tradingCoins", amount))
             case .ready:
-                // Do not feed PACYBITS the legacy tradingReady event. In the
-                // retired GameKit state machine that event can immediately push
-                // the controller into completion/post-trade UI. Only update the
-                // peer READY indicator visually; the backend decides when both
-                // players are actually ready.
+                // Do not feed PACYBITS the legacy tradingReady event. Update the
+                // peer READY indicator ourselves. If this client is already in
+                // PACYBITS' local READY/MAKE CHANGES state, then both sides are
+                // visibly ready and the original Accept/Cancel sheet should
+                // appear immediately.
                 if let ready = controller.value(forKey: "readyRight") as? UIView {
                     ready.isHidden = false
                     ready.alpha = 1.0
+                }
+                var localReady = false
+                if let confirm = controller.value(forKey: "confirmButton") as? NSObject,
+                   let value = confirm.value(forKey: "isConfirmed") as? NSNumber {
+                    localReady = value.boolValue
+                }
+                if localReady {
+                    PBRShowRevivalCompleteTradeDialog()
                 }
             case .makeChanges:
                 if let ready = controller.value(forKey: "readyRight") as? UIView {

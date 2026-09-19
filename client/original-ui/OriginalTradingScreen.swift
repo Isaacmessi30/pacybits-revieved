@@ -223,15 +223,42 @@ final class OriginalTradingScreen {
             case .coins(let amount):
                 guard (0...1_000_000_000).contains(amount) else { throw TradingClientError.invalidResponse }
                 messages.append(("tradingCoins", amount))
-            case .ready: messages.append(("tradingReady", ""))
-            case .makeChanges: messages.append(("tradingMakeChanges", ""))
-            case .accept: messages.append(("tradingCompleteTradeAccept", ""))
-            case .cancelAcceptance: messages.append(("tradingCompleteTradeCancel", ""))
+            case .ready:
+                // Do not feed PACYBITS the legacy tradingReady event. In the
+                // retired GameKit state machine that event can immediately push
+                // the controller into completion/post-trade UI. Only update the
+                // peer READY indicator visually; the backend decides when both
+                // players are actually ready.
+                if let ready = controller.value(forKey: "readyRight") as? UIView {
+                    ready.isHidden = false
+                    ready.alpha = 1.0
+                }
+            case .makeChanges:
+                if let ready = controller.value(forKey: "readyRight") as? UIView {
+                    ready.alpha = 0.0
+                    ready.isHidden = true
+                }
+                PBRHideRevivalCompleteTradeDialog()
+            case .accept:
+                // Peer/backend confirmation is intentionally not rendered into
+                // the legacy completion receiver.
+                break
+            case .cancelAcceptance:
+                PBRHideRevivalCompleteTradeDialog()
             case .handshake:
                 throw RevivalFailure("Native completion requires a reconciled server receipt.")
             }
         }
         for (type, value) in messages { receive(type, ["value": value]) }
+    }
+
+    func showCompletionPrompt() throws {
+        try requireActive()
+        PBRShowRevivalCompleteTradeDialog()
+    }
+
+    func hideCompletionPrompt() {
+        PBRHideRevivalCompleteTradeDialog()
     }
 
     /// Invoked only after the server has completed the room and the ledger has

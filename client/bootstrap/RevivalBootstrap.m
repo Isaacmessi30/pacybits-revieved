@@ -96,6 +96,11 @@ static IMP PBROriginalWishlistCardsSetter = NULL;
 static IMP PBROriginalMessageDoneTap = NULL;
 static IMP PBROriginalWishlistDoneTap = NULL;
 static IMP PBROriginalTradingChatTap = NULL;
+static IMP PBROriginalTradingCardOutlineTap = NULL;
+static IMP PBROriginalDuplicatesDidSelect = NULL;
+static IMP PBROriginalCoinsConfirmTap = NULL;
+static IMP PBROriginalMessageReturn = NULL;
+static NSInteger PBRPendingLocalOfferSlot = NSNotFound;
 static NSMutableArray<NSString *> *PBRCachedWishlistIdentifiers = nil;
 static UIViewController *PBRLastTradingMenuController = nil;
 static __weak UINavigationController *PBRLastTradingNavigationController = nil;
@@ -119,6 +124,10 @@ static BOOL PBRWishlistCardsHooked = NO;
 static BOOL PBRMessageDoneHooked = NO;
 static BOOL PBRWishlistDoneHooked = NO;
 static BOOL PBRTradingChatHooked = NO;
+static BOOL PBRTradingCardOutlineHooked = NO;
+static BOOL PBRDuplicatesSelectHooked = NO;
+static BOOL PBRCoinsConfirmHooked = NO;
+static BOOL PBRMessageReturnHooked = NO;
 
 static char PBRButtonWiredKey;
 static char PBRGestureControllerKey;
@@ -203,6 +212,24 @@ static void PBRSubmitNativeSignal(NSString *type, id value) {
         ((void (*)(id, SEL, NSString *, id))objc_msgSend)(launcher, submit, type, value);
     }
 }
+
+static void PBRSyncNativeOfferNow(void) {
+    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    SEL sel = NSSelectorFromString(@"syncNativeOfferNow");
+    if ([launcher respondsToSelector:sel]) {
+        ((void (*)(id, SEL))objc_msgSend)(launcher, sel);
+    }
+}
+
+static void PBRNavigateOriginalRoute(NSString *route) {
+    if (!route.length) return;
+    intptr_t slide = _dyld_get_image_vmaddr_slide(0);
+    void *raw = (void *)(uintptr_t)(0x1002bd8fcULL + slide);
+    if (!raw) return;
+    typedef void (*PBRNativeRoute)(NSString *, BOOL, BOOL, BOOL);
+    ((PBRNativeRoute)raw)(route, NO, NO, NO);
+}
+
 
 static void PBRTradingMessageDoneTap(id receiver, SEL selector, id gesture) {
     NSString *message = nil;
@@ -307,6 +334,88 @@ static void PBRTradingChatTap(id receiver, SEL selector, id gesture) {
                    dispatch_get_main_queue(), ^{ PBRInstallMessageButtonFallback(); });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.40 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ PBRInstallMessageButtonFallback(); });
+}
+
+
+static void PBRTradingCardOutlineTap(id receiver, SEL selector, id gesture) {
+    PBRPendingLocalOfferSlot = NSNotFound;
+    @try {
+        UIViewController *trade = PBRCurrentOriginalTrading();
+        NSArray *left = [trade valueForKey:@"cardsLeft"];
+        if ([left isKindOfClass:NSArray.class]) {
+            NSUInteger found = [left indexOfObjectIdenticalTo:receiver];
+            if (found != NSNotFound && found < 3) PBRPendingLocalOfferSlot = (NSInteger)found;
+        }
+    } @catch (NSException *ignored) {}
+
+    if (PBROriginalTradingCardOutlineTap) {
+        ((void (*)(id, SEL, id))PBROriginalTradingCardOutlineTap)(receiver, selector, gesture);
+    }
+    if (!PBRShouldInterceptTrading()) return;
+
+    PBRHealthBeacon(PBRPendingLocalOfferSlot == NSNotFound ? @"offer-slot-tap-unknown" : @"offer-slot-tap");
+    // Original PACYBITS records the selected slot in its helper before routing.
+    // GameKit retirement can leave the UI blocked without performing the route,
+    // so explicitly enter the original Duplicates controller as a fallback.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        Class dupClass = NSClassFromString(@"_TtC13PACYBITSFUT2024DuplicatesViewController");
+        UIViewController *top = [[PBRRevivalBootstrap shared] topPresenter];
+        if (![top isKindOfClass:dupClass]) {
+            PBRHealthBeacon(@"offer-slot-open-duplicates");
+            PBRNavigateOriginalRoute(@"duplicates");
+        }
+    });
+}
+
+static void PBRDuplicatesDidSelect(id receiver, SEL selector, UICollectionView *collectionView, NSIndexPath *indexPath) {
+    if (PBROriginalDuplicatesDidSelect) {
+        ((void (*)(id, SEL, UICollectionView *, NSIndexPath *))PBROriginalDuplicatesDidSelect)(
+            receiver, selector, collectionView, indexPath);
+    }
+    if (!PBRShouldInterceptTrading() || PBRPendingLocalOfferSlot == NSNotFound) return;
+
+    PBRHealthBeacon(@"offer-card-selected");
+    // PACYBITS' original selection callback owns populating the remembered
+    // TradingCard slot and returning to Trading. Resync after that callback has
+    // had time to restore the original screen.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ PBRSyncNativeOfferNow(); });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        PBRSyncNativeOfferNow();
+        PBRPendingLocalOfferSlot = NSNotFound;
+    });
+}
+
+static void PBRTradingCoinsConfirmTap(id receiver, SEL selector, id gesture) {
+    NSString *value = nil;
+    @try {
+        id field = [receiver valueForKey:@"textField"];
+        if ([field respondsToSelector:@selector(text)]) value = [field text];
+    } @catch (NSException *ignored) {}
+
+    if (PBROriginalCoinsConfirmTap) {
+        ((void (*)(id, SEL, id))PBROriginalCoinsConfirmTap)(receiver, selector, gesture);
+    }
+    if (!PBRShouldInterceptTrading()) return;
+
+    PBRHealthBeacon(value.length ? @"offer-coins-confirm" : @"offer-coins-empty");
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ PBRSyncNativeOfferNow(); });
+}
+
+static BOOL PBRTradingMessageReturn(id receiver, SEL selector, UITextField *field) {
+    NSString *message = [field.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    BOOL result = YES;
+    if (PBROriginalMessageReturn) {
+        result = ((BOOL (*)(id, SEL, UITextField *))PBROriginalMessageReturn)(receiver, selector, field);
+    }
+    if (PBRShouldInterceptTrading() && message.length) {
+        PBRHealthBeacon(@"fallback-message-return");
+        PBRSubmitNativeSignal(@"tradingDidSetMessage", message);
+    }
+    return result;
 }
 
 static BOOL PBRTradingIsArmed(void) {
@@ -1032,6 +1141,18 @@ static void PBRInstallRevivalHooks(void) {
     PBRInstallMethodHookOnce(friends, NSSelectorFromString(@"didMoveToWindow"),
                              (IMP)PBRFriendsDidMoveToWindow, &PBROriginalFriendsDidMoveToWindow, &PBRFriendsViewHooked);
 
+    Class tradingCard = NSClassFromString(@"_TtC13PACYBITSFUT2011TradingCard");
+    PBRInstallMethodHookOnce(tradingCard, NSSelectorFromString(@"outlineTapHandlerWithGesture:"),
+                             (IMP)PBRTradingCardOutlineTap, &PBROriginalTradingCardOutlineTap, &PBRTradingCardOutlineHooked);
+
+    Class duplicatesVC = NSClassFromString(@"_TtC13PACYBITSFUT2024DuplicatesViewController");
+    PBRInstallMethodHookOnce(duplicatesVC, NSSelectorFromString(@"collectionView:didSelectItemAtIndexPath:"),
+                             (IMP)PBRDuplicatesDidSelect, &PBROriginalDuplicatesDidSelect, &PBRDuplicatesSelectHooked);
+
+    Class coinsDialog = NSClassFromString(@"_TtC13PACYBITSFUT2018DialogTradingCoins");
+    PBRInstallMethodHookOnce(coinsDialog, NSSelectorFromString(@"confirmTapHandlerWithGesture:"),
+                             (IMP)PBRTradingCoinsConfirmTap, &PBROriginalCoinsConfirmTap, &PBRCoinsConfirmHooked);
+
     Class tradingVC = NSClassFromString(@"_TtC13PACYBITSFUT2021TradingViewController");
     PBRInstallMethodHookOnce(tradingVC, NSSelectorFromString(@"chatTapHandler:"),
                              (IMP)PBRTradingChatTap, &PBROriginalTradingChatTap, &PBRTradingChatHooked);
@@ -1039,6 +1160,8 @@ static void PBRInstallRevivalHooks(void) {
     Class messageDialog = NSClassFromString(@"_TtC13PACYBITSFUT2020DialogTradingMessage");
     PBRInstallMethodHookOnce(messageDialog, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
                              (IMP)PBRTradingMessageDoneTap, &PBROriginalMessageDoneTap, &PBRMessageDoneHooked);
+    PBRInstallMethodHookOnce(messageDialog, NSSelectorFromString(@"textFieldShouldReturn:"),
+                             (IMP)PBRTradingMessageReturn, &PBROriginalMessageReturn, &PBRMessageReturnHooked);
 
     Class wishlistDialog = NSClassFromString(@"_TtC13PACYBITSFUT2021DialogTradingWishlist");
     PBRInstallMethodHookOnce(wishlistDialog, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
@@ -1085,7 +1208,9 @@ static void PBRScheduleHookInstallation(void) {
                                   PBRMessageDoneHooked && PBRWishlistDoneHooked &&
                                   PBRTradeReadyHooked && PBRTradeAcceptHooked &&
                                   PBRTradeMakeChangesHooked && PBRTradeCancelAcceptHooked &&
-                                  PBRTradeLeaveHooked && PBRTradingChatHooked;
+                                  PBRTradeLeaveHooked && PBRTradingChatHooked &&
+                                  PBRTradingCardOutlineHooked && PBRDuplicatesSelectHooked &&
+                                  PBRCoinsConfirmHooked && PBRMessageReturnHooked;
         if (!criticalHooksReady) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{

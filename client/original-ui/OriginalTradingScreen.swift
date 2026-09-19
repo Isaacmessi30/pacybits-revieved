@@ -138,6 +138,13 @@ final class OriginalTradingScreen {
         let receive = unsafeBitCast(
             entry, to: (@convention(thin) (String, [String:Any]) -> Void).self)
         let value: Any = box["nil"] as? Bool == true ? "" : (box["value"] ?? "")
+        if signal.type == "tradingMessage", let text = value as? String {
+            if let label = controller.value(forKey: "messageRight") as? UILabel {
+                label.text = text
+                label.alpha = 1.0
+                return
+            }
+        }
         receive(signal.type, ["value": value])
     }
 

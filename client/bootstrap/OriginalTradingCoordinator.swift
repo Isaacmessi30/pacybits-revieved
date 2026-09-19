@@ -595,6 +595,32 @@ final class OriginalTradingCoordinator {
         if room.status == "cancelled" || room.status == "expired" {
             throw RevivalFailure("Your trading partner left the trade.")
         }
+
+        // A completed backend room is authoritative. Do not feed PACYBITS its
+        // legacy tradingCompleteTradeAccept event here: that starts the retired
+        // GameKit completion spinner and waits forever for tradingHandshake.
+        // The first confirm response may not include inventory; simply wait for
+        // the next status receipt, which does.
+        if room.isCompleted {
+            completedReceipt = response
+            guard response.inventory != nil, (response.inventoryVersion ?? 0) > 0 else {
+                return
+            }
+            guard let ledger else { throw TradingClientError.invalidResponse }
+            if !nativeSettlementStarted {
+                nativeSettlementStarted = true
+                do {
+                    try ledger.reconcile(response)
+                    PBRResetOriginalTradeState()
+                    finishSuccessfully(returnToTradingMenu: true)
+                } catch {
+                    nativeSettlementStarted = false
+                    throw error
+                }
+            }
+            return
+        }
+
         let next = try OriginalTradePeerState(room: room)
         let activeScreen = (screen?.isActive == true) ? screen : nil
 
@@ -631,28 +657,7 @@ final class OriginalTradingCoordinator {
                 }
             }
         }
-        if room.isCompleted {
-            guard response.inventory != nil, (response.inventoryVersion ?? 0) > 0,
-                  let ledger else {
-                throw TradingClientError.invalidResponse
-            }
 
-            // The revival backend is authoritative for settlement. The original
-            // GameKit-era tradingHandshake may never arrive, so do not block a
-            // completed trade on it. Reconcile the server delta directly into
-            // PACYBITS' persisted collection, verify it, then leave the trade.
-            if !nativeSettlementStarted {
-                nativeSettlementStarted = true
-                do {
-                    try ledger.reconcile(response)
-                    completedReceipt = response
-                    finishSuccessfully(returnToTradingMenu: true)
-                } catch {
-                    nativeSettlementStarted = false
-                    throw error
-                }
-            }
-        }
     }
 
     private func handleHandshake(_ value: Any?) async {

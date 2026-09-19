@@ -245,7 +245,8 @@ static void PBREnsureTrackedOffer(void) {
 static NSString *PBRIdentifierFromDuplicateSelection(id controller, UICollectionView *collectionView, NSIndexPath *indexPath) {
     @try {
         id players = [controller valueForKey:@"filteredPlayers"];
-        if ([players isKindOfClass:NSArray.class] && indexPath.item < [players count]) {
+        if ([players isKindOfClass:NSArray.class] && indexPath.item >= 0 &&
+            (NSUInteger)indexPath.item < [(NSArray *)players count]) {
             id player = [players objectAtIndex:indexPath.item];
             NSString *identifier = PBRPlayerIdentifier(player);
             if (identifier.length) return identifier;

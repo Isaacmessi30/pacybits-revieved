@@ -360,7 +360,7 @@ static void PBRRemoveControlOverlay(UIView *host, const void *key, BOOL enableHo
     }
 }
 
-static UIButton *PBRInstallWindowOverlay(UIView *target, UIButton **storage, SEL action) {
+static UIButton *PBRInstallWindowOverlay(UIView *target, UIButton * __strong *storage, SEL action) {
     if (!target || !target.window) return nil;
     UIWindow *window = target.window;
     UIButton *overlay = *storage;
@@ -383,7 +383,7 @@ static UIButton *PBRInstallWindowOverlay(UIView *target, UIButton **storage, SEL
     return overlay;
 }
 
-static void PBRRemoveWindowOverlay(UIButton **storage) {
+static void PBRRemoveWindowOverlay(UIButton * __strong *storage) {
     UIButton *overlay = *storage;
     [overlay removeFromSuperview];
     *storage = nil;

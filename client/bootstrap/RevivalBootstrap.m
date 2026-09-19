@@ -68,6 +68,9 @@
 - (void)channelsSearchTapped:(UITapGestureRecognizer *)gesture;
 - (void)friendsSearchTapped:(UITapGestureRecognizer *)gesture;
 - (void)tradingMessageFallbackTapped:(UITapGestureRecognizer *)gesture;
+- (void)revivalAcceptTapped:(UITapGestureRecognizer *)gesture;
+- (void)revivalCancelTapped:(UITapGestureRecognizer *)gesture;
+- (void)revivalMakeChangesTapped:(UITapGestureRecognizer *)gesture;
 - (void)aboutSignInTapped:(UIButton *)sender;
 - (void)aboutSignOutTapped:(UIButton *)sender;
 @end
@@ -102,6 +105,8 @@ static IMP PBROriginalCoinsConfirmTap = NULL;
 static IMP PBROriginalMessageReturn = NULL;
 static IMP PBROriginalMessageDidMoveToWindow = NULL;
 static IMP PBROriginalTradingCardDeleteTap = NULL;
+static IMP PBROriginalCompleteTradeDidMove = NULL;
+static IMP PBROriginalConfirmButtonDidMove = NULL;
 static NSInteger PBRPendingLocalOfferSlot = NSNotFound;
 static NSMutableDictionary<NSNumber *, NSString *> *PBRTrackedOfferCards = nil;
 static NSInteger PBRTrackedOfferCoins = 0;
@@ -134,6 +139,8 @@ static BOOL PBRCoinsConfirmHooked = NO;
 static BOOL PBRMessageReturnHooked = NO;
 static BOOL PBRMessageDidMoveHooked = NO;
 static BOOL PBRTradingCardDeleteHooked = NO;
+static BOOL PBRCompleteTradeDidMoveHooked = NO;
+static BOOL PBRConfirmButtonDidMoveHooked = NO;
 
 static char PBRButtonWiredKey;
 static char PBRGestureControllerKey;
@@ -270,6 +277,47 @@ static NSString *PBRIdentifierFromDuplicateSelection(id controller, UICollection
 
 
 
+
+
+static void PBRReplaceTapGestures(UIView *view, id target, SEL action) {
+    if (!view) return;
+    for (UIGestureRecognizer *gesture in [view.gestureRecognizers copy]) {
+        if ([gesture isKindOfClass:UITapGestureRecognizer.class]) {
+            [view removeGestureRecognizer:gesture];
+        }
+    }
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:target action:action];
+    tap.cancelsTouchesInView = YES;
+    [view addGestureRecognizer:tap];
+    view.userInteractionEnabled = YES;
+}
+
+static void PBRCompleteTradeDidMoveToWindow(id receiver, SEL selector) {
+    if (PBROriginalCompleteTradeDidMove) {
+        ((void (*)(id, SEL))PBROriginalCompleteTradeDidMove)(receiver, selector);
+    }
+    if (![receiver window]) return;
+    @try {
+        UIView *accept = [receiver valueForKey:@"acceptButton"];
+        UIView *cancel = [receiver valueForKey:@"cancelButton"];
+        PBRReplaceTapGestures(accept, [PBRRevivalBootstrap shared], @selector(revivalAcceptTapped:));
+        PBRReplaceTapGestures(cancel, [PBRRevivalBootstrap shared], @selector(revivalCancelTapped:));
+        PBRHealthBeacon(@"complete-dialog-direct-controls");
+    } @catch (NSException *ignored) {}
+}
+
+static void PBRConfirmButtonDidMoveToWindow(id receiver, SEL selector) {
+    if (PBROriginalConfirmButtonDidMove) {
+        ((void (*)(id, SEL))PBROriginalConfirmButtonDidMove)(receiver, selector);
+    }
+    if (![receiver window]) return;
+    @try {
+        // Preserve the pan recognizer used to Ready. Replace only tap gestures
+        // so a tap in the confirmed state maps to Make Changes deterministically.
+        PBRReplaceTapGestures((UIView *)receiver, [PBRRevivalBootstrap shared], @selector(revivalMakeChangesTapped:));
+        PBRHealthBeacon(@"confirm-button-direct-controls");
+    } @catch (NSException *ignored) {}
+}
 
 static void PBRRestoreLocalReadyUI(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -759,6 +807,31 @@ static void PBRTradingMenuTapHook(id receiver, SEL selector, UIGestureRecognizer
         PBRSubmitNativeSignal(@"tradingDidSetMessage", trimmed);
     }
 }
+
+- (void)revivalAcceptTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
+    PBRHealthBeacon(@"direct-accept");
+    PBRSubmitNativeFallback(@"accept");
+}
+
+- (void)revivalCancelTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
+    PBRHealthBeacon(@"direct-cancel-ready");
+    PBRRestoreLocalReadyUI();
+    PBRSubmitNativeFallback(@"makeChanges");
+}
+
+- (void)revivalMakeChangesTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
+    id view = gesture.view;
+    BOOL confirmed = NO;
+    @try { confirmed = [[view valueForKey:@"isConfirmed"] boolValue]; } @catch (NSException *ignored) {}
+    if (!confirmed) return;
+    PBRHealthBeacon(@"direct-make-changes");
+    PBRRestoreLocalReadyUI();
+    PBRSubmitNativeFallback(@"makeChanges");
+}
+
 
 - (void)codeSearchTapped:(UITapGestureRecognizer *)gesture {
     id receiver = [objc_getAssociatedObject(gesture, &PBRGestureControllerKey) nonretainedObjectValue];
@@ -1324,12 +1397,18 @@ static void PBRInstallRevivalHooks(void) {
                              (IMP)PBRTradingReadyPan, &PBROriginalTradeReadyPan, &PBRTradeReadyHooked);
     PBRInstallMethodHookOnce(confirmButton, NSSelectorFromString(@"makeChangesTapHandlerWithGesture:"),
                              (IMP)PBRTradingMakeChangesTap, &PBROriginalTradeMakeChangesTap, &PBRTradeMakeChangesHooked);
+    PBRInstallMethodHookOnce(confirmButton, NSSelectorFromString(@"didMoveToWindow"),
+                             (IMP)PBRConfirmButtonDidMoveToWindow,
+                             &PBROriginalConfirmButtonDidMove, &PBRConfirmButtonDidMoveHooked);
 
     Class completeTrade = NSClassFromString(@"_TtC13PACYBITSFUT2026DialogTradingCompleteTrade");
     PBRInstallMethodHookOnce(completeTrade, NSSelectorFromString(@"acceptTapHandlerWithGesture:"),
                              (IMP)PBRTradingAcceptTap, &PBROriginalTradeAcceptTap, &PBRTradeAcceptHooked);
     PBRInstallMethodHookOnce(completeTrade, NSSelectorFromString(@"cancelTapHandlerWithGesture:"),
                              (IMP)PBRTradingCancelAcceptTap, &PBROriginalTradeCancelAcceptTap, &PBRTradeCancelAcceptHooked);
+    PBRInstallMethodHookOnce(completeTrade, NSSelectorFromString(@"didMoveToWindow"),
+                             (IMP)PBRCompleteTradeDidMoveToWindow,
+                             &PBROriginalCompleteTradeDidMove, &PBRCompleteTradeDidMoveHooked);
 
     Class leaveTrade = NSClassFromString(@"_TtC13PACYBITSFUT2023DialogTradingLeaveTrade");
     PBRInstallMethodHookOnce(leaveTrade, NSSelectorFromString(@"leaveTapHandlerWithGesture:"),
@@ -1363,7 +1442,8 @@ static void PBRScheduleHookInstallation(void) {
                                   PBRTradeLeaveHooked && PBRTradingChatHooked &&
                                   PBRTradingCardOutlineHooked && PBRDuplicatesSelectHooked &&
                                   PBRCoinsConfirmHooked && PBRMessageReturnHooked &&
-                                  PBRMessageDidMoveHooked && PBRTradingCardDeleteHooked;
+                                  PBRMessageDidMoveHooked && PBRTradingCardDeleteHooked &&
+                                  PBRCompleteTradeDidMoveHooked && PBRConfirmButtonDidMoveHooked;
         if (!criticalHooksReady) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{

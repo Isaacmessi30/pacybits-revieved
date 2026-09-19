@@ -223,11 +223,11 @@ static void PBRSyncNativeOfferNow(void) {
 
 static void PBRNavigateOriginalRoute(NSString *route) {
     if (!route.length) return;
-    intptr_t slide = _dyld_get_image_vmaddr_slide(0);
-    void *raw = (void *)(uintptr_t)(0x1002bd8fcULL + slide);
-    if (!raw) return;
-    typedef void (*PBRNativeRoute)(NSString *, BOOL, BOOL, BOOL);
-    ((PBRNativeRoute)raw)(route, NO, NO, NO);
+    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    SEL sel = NSSelectorFromString(@"openOriginalRoute:");
+    if ([launcher respondsToSelector:sel]) {
+        ((void (*)(id, SEL, NSString *))objc_msgSend)(launcher, sel, route);
+    }
 }
 
 

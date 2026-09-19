@@ -72,6 +72,10 @@
 - (void)revivalCancelTapped:(UITapGestureRecognizer *)gesture;
 - (void)revivalCompleteDialogTapped:(UITapGestureRecognizer *)gesture;
 - (void)revivalMakeChangesTapped:(UITapGestureRecognizer *)gesture;
+- (void)revivalChatOverlayPressed:(UIButton *)sender;
+- (void)revivalAcceptOverlayPressed:(UIButton *)sender;
+- (void)revivalCancelOverlayPressed:(UIButton *)sender;
+- (void)revivalMakeChangesOverlayPressed:(UIButton *)sender;
 - (void)aboutSignInTapped:(UIButton *)sender;
 - (void)aboutSignOutTapped:(UIButton *)sender;
 @end
@@ -106,11 +110,18 @@ static IMP PBROriginalCoinsConfirmTap = NULL;
 static IMP PBROriginalMessageReturn = NULL;
 static IMP PBROriginalMessageDidMoveToWindow = NULL;
 static IMP PBROriginalTradingCardDeleteTap = NULL;
+static IMP PBROriginalTradingCardSetCard = NULL;
 static IMP PBROriginalCompleteTradeDidMove = NULL;
 static IMP PBROriginalConfirmButtonDidMove = NULL;
 static NSInteger PBRPendingLocalOfferSlot = NSNotFound;
 static NSMutableDictionary<NSNumber *, NSString *> *PBRTrackedOfferCards = nil;
 static NSInteger PBRTrackedOfferCoins = 0;
+static BOOL PBRResettingTradeUI = NO;
+static BOOL PBRTradeOverlayWatchStarted = NO;
+static char PBRChatOverlayKey;
+static char PBRAcceptOverlayKey;
+static char PBRCancelOverlayKey;
+static char PBRMakeChangesOverlayKey;
 static NSMutableArray<NSString *> *PBRCachedWishlistIdentifiers = nil;
 static UIViewController *PBRLastTradingMenuController = nil;
 static __weak UINavigationController *PBRLastTradingNavigationController = nil;
@@ -140,6 +151,7 @@ static BOOL PBRCoinsConfirmHooked = NO;
 static BOOL PBRMessageReturnHooked = NO;
 static BOOL PBRMessageDidMoveHooked = NO;
 static BOOL PBRTradingCardDeleteHooked = NO;
+static BOOL PBRTradingCardSetCardHooked = NO;
 static BOOL PBRCompleteTradeDidMoveHooked = NO;
 static BOOL PBRConfirmButtonDidMoveHooked = NO;
 
@@ -308,6 +320,125 @@ static NSString *PBRIdentifierFromDuplicateSelection(id controller, UICollection
 
 
 
+
+
+static UIButton *PBRInstallControlOverlay(UIView *host, const void *key, SEL action, BOOL disableHostGestures) {
+    if (!host) return nil;
+    UIButton *overlay = objc_getAssociatedObject(host, key);
+    if (![overlay isKindOfClass:UIButton.class] || overlay.superview != host) {
+        overlay = [UIButton buttonWithType:UIButtonTypeCustom];
+        overlay.frame = host.bounds;
+        overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        overlay.backgroundColor = UIColor.clearColor;
+        overlay.exclusiveTouch = YES;
+        overlay.accessibilityIdentifier = @"pbr-revival-control-overlay";
+        [overlay addTarget:[PBRRevivalBootstrap shared] action:action forControlEvents:UIControlEventTouchUpInside];
+        [host addSubview:overlay];
+        objc_setAssociatedObject(host, key, overlay, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    } else {
+        overlay.frame = host.bounds;
+        [host bringSubviewToFront:overlay];
+    }
+    host.userInteractionEnabled = YES;
+    overlay.userInteractionEnabled = YES;
+    overlay.hidden = NO;
+    if (disableHostGestures) {
+        for (UIGestureRecognizer *gesture in host.gestureRecognizers) gesture.enabled = NO;
+    }
+    return overlay;
+}
+
+static void PBRRemoveControlOverlay(UIView *host, const void *key, BOOL enableHostGestures) {
+    if (!host) return;
+    UIView *overlay = objc_getAssociatedObject(host, key);
+    [overlay removeFromSuperview];
+    objc_setAssociatedObject(host, key, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (enableHostGestures) {
+        for (UIGestureRecognizer *gesture in host.gestureRecognizers) gesture.enabled = YES;
+    }
+}
+
+static void PBRRefreshTradeControlOverlays(void) {
+    @try {
+        UIViewController *trade = PBRRawOriginalTrading();
+        if (trade && trade.isViewLoaded && trade.view.window) {
+            UIView *chat = [trade valueForKey:@"chatButton"];
+            PBRInstallControlOverlay(chat, &PBRChatOverlayKey,
+                                     @selector(revivalChatOverlayPressed:), YES);
+
+            UIView *confirm = [trade valueForKey:@"confirmButton"];
+            BOOL confirmed = NO;
+            @try { confirmed = [[confirm valueForKey:@"isConfirmed"] boolValue]; } @catch (NSException *ignored) {}
+            if (confirmed) {
+                PBRInstallControlOverlay(confirm, &PBRMakeChangesOverlayKey,
+                                         @selector(revivalMakeChangesOverlayPressed:), YES);
+            } else {
+                PBRRemoveControlOverlay(confirm, &PBRMakeChangesOverlayKey, YES);
+            }
+        }
+
+        UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
+        Class completeClass = NSClassFromString(@"_TtC13PACYBITSFUT2026DialogTradingCompleteTrade");
+        UIView *dialog = PBRFindViewOfClass(window, completeClass);
+        if (dialog) {
+            UIView *accept = [dialog valueForKey:@"acceptButton"];
+            UIView *cancel = [dialog valueForKey:@"cancelButton"];
+            PBRInstallControlOverlay(accept, &PBRAcceptOverlayKey,
+                                     @selector(revivalAcceptOverlayPressed:), YES);
+            PBRInstallControlOverlay(cancel, &PBRCancelOverlayKey,
+                                     @selector(revivalCancelOverlayPressed:), YES);
+        }
+    } @catch (NSException *ignored) {}
+}
+
+static void PBRTradeOverlayWatchTick(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        PBRRefreshTradeControlOverlays();
+        PBRTradeOverlayWatchTick();
+    });
+}
+
+static void PBRStartTradeOverlayWatch(void) {
+    if (PBRTradeOverlayWatchStarted) return;
+    PBRTradeOverlayWatchStarted = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{ PBRTradeOverlayWatchTick(); });
+}
+
+static void PBRTradingCardSetCard(id receiver, SEL selector, id card) {
+    if (PBROriginalTradingCardSetCard) {
+        ((void (*)(id, SEL, id))PBROriginalTradingCardSetCard)(receiver, selector, card);
+    }
+    if (PBRResettingTradeUI || !(PBRRevivalMatchActive() || PBRTradingIsArmed())) return;
+
+    @try {
+        UIViewController *trade = PBRRawOriginalTrading();
+        NSArray *left = [trade valueForKey:@"cardsLeft"];
+        if (![left isKindOfClass:NSArray.class]) return;
+        NSUInteger found = [left indexOfObjectIdenticalTo:receiver];
+        if (found == NSNotFound || found >= 3) return;
+        NSInteger slot = (NSInteger)found;
+
+        PBREnsureTrackedOffer();
+        if (!card) {
+            if (PBRTrackedOfferCards[@(slot)] != nil) {
+                [PBRTrackedOfferCards removeObjectForKey:@(slot)];
+                PBRSubmitNativeDeleted(slot);
+            }
+            return;
+        }
+
+        NSString *identifier = PBRPlayerIdentifier(card);
+        if (!identifier.length) {
+            @try { identifier = PBRPlayerIdentifier([card valueForKey:@"player"]); }
+            @catch (NSException *ignored) {}
+        }
+        if (identifier.length && ![PBRTrackedOfferCards[@(slot)] isEqualToString:identifier]) {
+            PBRTrackedOfferCards[@(slot)] = identifier;
+            PBRSubmitNativePicked(slot, identifier);
+        }
+    } @catch (NSException *ignored) {}
+}
 
 static void PBRReplaceTapGestures(UIView *view, id target, SEL action) {
     if (!view) return;
@@ -1444,6 +1575,8 @@ static void PBRInstallRevivalHooks(void) {
                              (IMP)PBRTradingCardOutlineTap, &PBROriginalTradingCardOutlineTap, &PBRTradingCardOutlineHooked);
     PBRInstallMethodHookOnce(tradingCard, NSSelectorFromString(@"deleteTapHandlerWithGesture:"),
                              (IMP)PBRTradingCardDeleteTap, &PBROriginalTradingCardDeleteTap, &PBRTradingCardDeleteHooked);
+    PBRInstallMethodHookOnce(tradingCard, NSSelectorFromString(@"setCard:"),
+                             (IMP)PBRTradingCardSetCard, &PBROriginalTradingCardSetCard, &PBRTradingCardSetCardHooked);
 
     Class duplicatesVC = NSClassFromString(@"_TtC13PACYBITSFUT2024DuplicatesViewController");
     PBRInstallMethodHookOnce(duplicatesVC, NSSelectorFromString(@"collectionView:didSelectItemAtIndexPath:"),
@@ -1507,6 +1640,7 @@ static void PBRInstallRevivalHooks(void) {
                              (IMP)PBRMatchForInvite, &PBROriginalMatchForInvite, &PBRInviteHooked);
     PBRInstallMethodHookOnce(matchmaker, NSSelectorFromString(@"cancel"),
                              (IMP)PBRMatchmakerCancel, &PBROriginalMatchmakerCancel, &PBRCancelHooked);
+    PBRStartTradeOverlayWatch();
 }
 
 static void PBRScheduleHookInstallation(void) {
@@ -1660,6 +1794,7 @@ void PBRReturnToTradingMenu(void) {
 
 void PBRResetOriginalTradeState(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
+        PBRResettingTradeUI = YES;
         @try {
             UIViewController *controller = PBRRawOriginalTrading();
             if (!controller) return;
@@ -1719,6 +1854,7 @@ void PBRResetOriginalTradeState(void) {
         } @catch (NSException *exception) {
             PBRHealthBeacon(@"trade-ui-reset-failed");
         }
+        PBRResettingTradeUI = NO;
     });
 }
 

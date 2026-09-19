@@ -166,6 +166,19 @@ final class OriginalTradingScreen {
 
     func renderSignal(_ signal: TradeSignal) throws {
         try requireActive()
+        if signal.type == "tradingMessage" {
+            guard let data = Data(base64Encoded: signal.payload),
+                  let box = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String:Any],
+                  let value = box["value"] as? String else {
+                throw RevivalFailure("Invalid PACYBITS trading message.")
+            }
+            if let label = controller.value(forKey: "messageRight") as? UILabel {
+                label.text = value
+                label.alpha = 1.0
+                label.isHidden = false
+            }
+            return
+        }
         guard signal.payload.count <= 12_000, let data = Data(base64Encoded: signal.payload),
               data.count <= 8_192,
               let box = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String:Any] else {

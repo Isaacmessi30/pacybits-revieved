@@ -238,6 +238,34 @@ static void PBRSyncNativeOfferNow(void) {
     }
 }
 
+static void PBRSubmitNativePicked(NSInteger slot, NSString *cardID) {
+    if (slot < 0 || slot > 2 || !cardID.length) return;
+    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    SEL sel = NSSelectorFromString(@"submitNativePicked:cardID:");
+    if ([launcher respondsToSelector:sel]) {
+        ((void (*)(id, SEL, NSInteger, NSString *))objc_msgSend)(launcher, sel, slot, cardID);
+    }
+}
+
+static void PBRSubmitNativeDeleted(NSInteger slot) {
+    if (slot < 0 || slot > 2) return;
+    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    SEL sel = NSSelectorFromString(@"submitNativeDeleted:");
+    if ([launcher respondsToSelector:sel]) {
+        ((void (*)(id, SEL, NSInteger))objc_msgSend)(launcher, sel, slot);
+    }
+}
+
+static void PBRSubmitNativeCoins(NSInteger coins) {
+    if (coins < 0) return;
+    Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
+    SEL sel = NSSelectorFromString(@"submitNativeCoins:");
+    if ([launcher respondsToSelector:sel]) {
+        ((void (*)(id, SEL, NSInteger))objc_msgSend)(launcher, sel, coins);
+    }
+}
+
+
 static void PBRNavigateOriginalRoute(NSString *route) {
     if (!route.length) return;
     Class launcher = NSClassFromString(@"PBROriginalTradingLauncher");
@@ -529,7 +557,7 @@ static void PBRTradingCardDeleteTap(id receiver, SEL selector, id gesture) {
         PBREnsureTrackedOffer();
         [PBRTrackedOfferCards removeObjectForKey:@(slot)];
         PBRHealthBeacon(@"offer-card-deleted");
-        PBRSyncNativeOfferNow();
+        PBRSubmitNativeDeleted(slot);
     }
 }
 
@@ -547,6 +575,7 @@ static void PBRDuplicatesDidSelect(id receiver, SEL selector, UICollectionView *
     if (selectedSlot != NSNotFound && selectedIdentifier.length) {
         PBRTrackedOfferCards[@(selectedSlot)] = selectedIdentifier;
         PBRHealthBeacon(@"offer-card-selected");
+        PBRSubmitNativePicked(selectedSlot, selectedIdentifier);
     } else {
         PBRHealthBeacon(@"offer-card-selected-id-missing");
     }
@@ -594,6 +623,7 @@ static void PBRTradingCoinsConfirmTap(id receiver, SEL selector, id gesture) {
     long long parsedCoins = coinDigits.longLongValue;
     PBRTrackedOfferCoins = (parsedCoins >= 0 && parsedCoins <= NSIntegerMax) ? (NSInteger)parsedCoins : 0;
     PBRHealthBeacon(value.length ? @"offer-coins-confirm" : @"offer-coins-empty");
+    PBRSubmitNativeCoins(PBRTrackedOfferCoins);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ PBRSyncNativeOfferNow(); });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.40 * NSEC_PER_SEC)),

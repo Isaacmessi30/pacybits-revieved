@@ -1,7 +1,7 @@
 name: Build ESign launch-test module
 on:
   push:
-    branches: [main]
+    branches: [main, test63-completion-message-fix]
     paths:
       - client/bootstrap/**
       - client/original-ui/**

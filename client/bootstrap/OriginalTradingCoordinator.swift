@@ -628,17 +628,28 @@ final class OriginalTradingCoordinator {
             guard let ledger else { throw TradingClientError.invalidResponse }
             if !nativeSettlementStarted {
                 nativeSettlementStarted = true
+
+                // The server settlement is authoritative. Do not hold the PACYBITS
+                // completion UI hostage to local collection reconciliation: Test 63
+                // proved the room can be completed while a local save verification
+                // error prevents the navigation step from ever running.
+                PBRNativeEventProbe("complete-server-receipt")
+                PBRResetOriginalTradeState()
+                PBRReturnToTradingMenu()
+                PBRNativeEventProbe("complete-ui-return-requested")
+
                 do {
-                    // Render has already atomically settled both sides. Reconcile the
-                    // authoritative receipt locally instead of waiting for retired
-                    // GameKit's tradingHandshake packet, which never arrives for the bot.
+                    // Apply/verify the server receipt after requesting the native
+                    // completion transition. The ledger persists pending recovery
+                    // before mutating the save, so an interrupted apply is recoverable.
                     try ledger.reconcile(response)
-                    PBRResetOriginalTradeState()
-                    finishSuccessfully(returnToTradingMenu: true)
+                    PBRNativeEventProbe("complete-ledger-reconciled")
                 } catch {
-                    nativeSettlementStarted = false
-                    throw error
+                    // The trade is already committed server-side. Preserve the ledger
+                    // recovery state and do not reopen/stall the completed trade UI.
+                    PBRNativeEventProbe("complete-ledger-reconcile-deferred")
                 }
+                finishSuccessfully()
             }
             return
         }

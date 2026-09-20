@@ -364,7 +364,10 @@ function execute(state, key, input, now, id) {
     default: {
       const room = roomFor(state, key, input.roomId, now, true);
       requireValue(integer(input.revision, 0, Number.MAX_SAFE_INTEGER) && input.revision === room.revision, 'STALE_REVISION', 409);
-      if (room.status === 'completed' && input.action === 'confirm') return { room: view(room, key) };
+      if (room.status === 'completed' && input.action === 'confirm') {
+        return { room: view(room, key), inventory: { coins: a.coins, cards: a.cards },
+          inventoryVersion: a.inventoryVersion ?? 0, preserveFirstCopy: a.preserveFirstCopy === true };
+      }
       requireValue(room.status === 'open' && room.expiresAt > now, 'ROOM_CLOSED', 409);
       requireValue(room.members.length === 2, 'WAITING_FOR_PARTNER', 409);
       if (input.action === 'offer') {
@@ -380,6 +383,10 @@ function execute(state, key, input, now, id) {
         requireValue(room.members.every(member => room.ready[member] === room.revision), 'BOTH_PLAYERS_MUST_BE_READY', 409);
         room.confirmed[key] = room.revision;
         if (room.members.every(member => room.confirmed[member] === room.revision)) settle(state, room, now);
+      }
+      if (input.action === 'confirm' && room.status === 'completed') {
+        return { room: view(room, key), inventory: { coins: a.coins, cards: a.cards },
+          inventoryVersion: a.inventoryVersion ?? 0, preserveFirstCopy: a.preserveFirstCopy === true };
       }
       return { room: view(room, key) };
     }

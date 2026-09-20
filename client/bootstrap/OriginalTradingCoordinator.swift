@@ -621,11 +621,26 @@ final class OriginalTradingCoordinator {
             }
         }
         if room.isCompleted {
-            guard response.inventory != nil, (response.inventoryVersion ?? 0) > 0 else {
-                throw TradingClientError.invalidResponse
-            }
             completedReceipt = response
-            if let encoded = room.peerHandshake { try finishWithPeerHandshake(encoded) }
+            guard response.inventory != nil, (response.inventoryVersion ?? 0) > 0 else {
+                return
+            }
+            guard let ledger else { throw TradingClientError.invalidResponse }
+            if !nativeSettlementStarted {
+                nativeSettlementStarted = true
+                do {
+                    // Render has already atomically settled both sides. Reconcile the
+                    // authoritative receipt locally instead of waiting for retired
+                    // GameKit's tradingHandshake packet, which never arrives for the bot.
+                    try ledger.reconcile(response)
+                    PBRResetOriginalTradeState()
+                    finishSuccessfully(returnToTradingMenu: true)
+                } catch {
+                    nativeSettlementStarted = false
+                    throw error
+                }
+            }
+            return
         }
     }
 
@@ -738,14 +753,18 @@ final class OriginalTradingCoordinator {
         return dictionary
     }
 
-    private func finishSuccessfully() {
+    private func finishSuccessfully(returnToTradingMenu: Bool = false) {
         pollTask?.cancel(); pollTask = nil
+        matchmakingTask?.cancel(); matchmakingTask = nil
         LegacyOutboundBridge.handle = nil
         screen?.restoreProfile()
         session = nil
         completedReceipt = nil
         closed = true
         OriginalTradingCoordinator.active = nil
+        if returnToTradingMenu {
+            PBRReturnToTradingMenu()
+        }
     }
 
     private func showError(_ error: Error) {

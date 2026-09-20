@@ -43,8 +43,17 @@ test('atomic exchange conserves coins and cards; repeated confirmation does not 
   const req = { action: 'confirm', roomId: id, revision };
   assert.equal(f.call('alice', req).body.room.status, 'open');
   assert.equal(f.state.accounts[accountKey('alice')].coins, 100);
-  assert.equal(f.call('bob', req).body.room.status, 'completed');
-  for (let i = 0; i < 3; i++) assert.equal(f.call('bob', req).body.room.status, 'completed');
+  const completed = f.call('bob', req);
+  assert.equal(completed.body.room.status, 'completed');
+  assert.deepEqual(completed.body.inventory, { coins: 130, cards: { cardA: 3 } });
+  assert.equal(completed.body.inventoryVersion, 1);
+  assert.equal(completed.body.preserveFirstCopy, false);
+  for (let i = 0; i < 3; i++) {
+    const replay = f.call('bob', req);
+    assert.equal(replay.body.room.status, 'completed');
+    assert.deepEqual(replay.body.inventory, completed.body.inventory);
+    assert.equal(replay.body.inventoryVersion, completed.body.inventoryVersion);
+  }
   const a = f.state.accounts[accountKey('alice')], b = f.state.accounts[accountKey('bob')];
   assert.equal(a.coins, 70); assert.equal(b.coins, 130);
   assert.deepEqual(a.cards, { cardA: 1, cardB: 2 });

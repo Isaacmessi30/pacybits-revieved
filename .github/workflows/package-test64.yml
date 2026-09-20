@@ -1,0 +1,92 @@
+name: Package Test 64 IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_tag:
+        description: Release tag containing the known-good Test 63 IPA
+        required: true
+        default: pacybits-base-test63
+      base_asset:
+        description: Exact Test 63 IPA asset filename
+        required: true
+        default: Pacybits-Revival-OriginalTrading-Test-63-ChatAndCompletionFix.ipa
+      output_name:
+        description: Output IPA filename
+        required: true
+        default: Pacybits-Revival-OriginalTrading-Test-64-FinalCompletionUnblockFix.ipa
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Test 64 bootstrap
+        run: bash scripts/build-bootstrap.sh
+
+      - name: Download known-good Test 63 base IPA
+        run: |
+          mkdir -p package
+          gh release download "${{ inputs.base_tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "${{ inputs.base_asset }}" \
+            --dir package
+          test -f "package/${{ inputs.base_asset }}"
+
+      - name: Verify base IPA
+        run: unzip -t "package/${{ inputs.base_asset }}" >/dev/null
+
+      - name: Locate fresh bootstrap dylib
+        id: locate
+        run: |
+          DYLIB="$(find build/bootstrap -type f -name RevivalBootstrap.dylib -print -quit)"
+          test -n "$DYLIB"
+          echo "dylib=$DYLIB" >> "$GITHUB_OUTPUT"
+
+      - name: Inject only RevivalBootstrap.dylib
+        run: |
+          rm -rf package/work
+          mkdir -p package/work
+          ditto -x -k "package/${{ inputs.base_asset }}" package/work
+
+          TARGET="$(find package/work/Payload -type f -path '*/Frameworks/RevivalBootstrap.dylib' -print -quit)"
+          test -n "$TARGET"
+
+          cp "${{ steps.locate.outputs.dylib }}" "$TARGET"
+
+          (
+            cd package/work
+            ditto -c -k --sequesterRsrc --keepParent Payload "../${{ inputs.output_name }}"
+          )
+
+      - name: Verify final IPA
+        run: |
+          unzip -t "package/${{ inputs.output_name }}" >/dev/null
+          shasum -a 256 "package/${{ inputs.output_name }}"
+
+          rm -rf package/verify-base package/verify-new
+          mkdir -p package/verify-base package/verify-new
+          ditto -x -k "package/${{ inputs.base_asset }}" package/verify-base
+          ditto -x -k "package/${{ inputs.output_name }}" package/verify-new
+
+          # The intended app payload difference is the rebuilt bootstrap dylib.
+          diff -qr package/verify-base package/verify-new \
+            | grep -v 'Frameworks/RevivalBootstrap.dylib' \
+            | grep -v '_CodeSignature' \
+            | grep -v 'CodeResources' \
+            && { echo "Unexpected payload differences found"; exit 1; } || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pacybits-Test-64-Final-IPA
+          path: package/${{ inputs.output_name }}
+          retention-days: 7
+          if-no-files-found: error

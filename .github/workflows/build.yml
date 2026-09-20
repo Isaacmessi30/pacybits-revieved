@@ -1,7 +1,7 @@
 name: Client build and backend checks
 on:
   push:
-    branches: [main]
+    branches: [main, test63-completion-message-fix]
   pull_request:
   workflow_dispatch:
 permissions:

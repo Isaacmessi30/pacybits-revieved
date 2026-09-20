@@ -96,6 +96,8 @@ static IMP PBROriginalWishlistCardsSetter = NULL;
 static IMP PBROriginalMessageDoneTap = NULL;
 static IMP PBROriginalWishlistDoneTap = NULL;
 static IMP PBROriginalTradingChatTap = NULL;
+static IMP PBROriginalMessageReturn = NULL;
+static IMP PBROriginalMessageDidMoveToWindow = NULL;
 static NSMutableArray<NSString *> *PBRCachedWishlistIdentifiers = nil;
 static UIViewController *PBRLastTradingMenuController = nil;
 static __weak UINavigationController *PBRLastTradingNavigationController = nil;
@@ -119,6 +121,8 @@ static BOOL PBRWishlistCardsHooked = NO;
 static BOOL PBRMessageDoneHooked = NO;
 static BOOL PBRWishlistDoneHooked = NO;
 static BOOL PBRTradingChatHooked = NO;
+static BOOL PBRMessageReturnHooked = NO;
+static BOOL PBRMessageDidMoveHooked = NO;
 
 static char PBRButtonWiredKey;
 static char PBRGestureControllerKey;
@@ -204,20 +208,51 @@ static void PBRSubmitNativeSignal(NSString *type, id value) {
     }
 }
 
+static void PBRTradingMessageDidMoveToWindow(id receiver, SEL selector) {
+    if (PBROriginalMessageDidMoveToWindow) {
+        ((void (*)(id, SEL))PBROriginalMessageDidMoveToWindow)(receiver, selector);
+    }
+    if (![receiver window]) return;
+    @try {
+        id field = [receiver valueForKey:@"textField"];
+        id button = [receiver valueForKey:@"button"];
+        [field setUserInteractionEnabled:YES];
+        [button setUserInteractionEnabled:YES];
+    } @catch (NSException *ignored) {}
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.03 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ PBRInstallMessageButtonFallback(); });
+    PBRHealthBeacon(@"message-dialog-visible");
+}
+
 static void PBRTradingMessageDoneTap(id receiver, SEL selector, id gesture) {
     NSString *message = nil;
     @try {
         id field = [receiver valueForKey:@"textField"];
         if ([field respondsToSelector:@selector(text)]) message = [field text];
     } @catch (NSException *ignored) {}
-    if (PBROriginalMessageDoneTap) {
-        ((void (*)(id, SEL, id))PBROriginalMessageDoneTap)(receiver, selector, gesture);
-    }
     NSString *trimmed = [message stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (PBRShouldInterceptTrading() && trimmed.length) {
+    // Forward before PACYBITS closes/clears the dialog. Do not gate on armed state:
+    // this hook only exists on the native trading message dialog during the match.
+    if (trimmed.length) {
         PBRHealthBeacon(@"fallback-message");
         PBRSubmitNativeSignal(@"tradingDidSetMessage", trimmed);
     }
+    if (PBROriginalMessageDoneTap) {
+        ((void (*)(id, SEL, id))PBROriginalMessageDoneTap)(receiver, selector, gesture);
+    }
+}
+
+static BOOL PBRTradingMessageReturn(id receiver, SEL selector, UITextField *field) {
+    NSString *message = [field.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    BOOL result = YES;
+    if (PBROriginalMessageReturn) {
+        result = ((BOOL (*)(id, SEL, UITextField *))PBROriginalMessageReturn)(receiver, selector, field);
+    }
+    if (message.length) {
+        PBRHealthBeacon(@"fallback-message-return");
+        PBRSubmitNativeSignal(@"tradingDidSetMessage", message);
+    }
+    return result;
 }
 
 static void PBRTradingWishlistDoneTap(id receiver, SEL selector, id gesture) {
@@ -1039,6 +1074,11 @@ static void PBRInstallRevivalHooks(void) {
     Class messageDialog = NSClassFromString(@"_TtC13PACYBITSFUT2020DialogTradingMessage");
     PBRInstallMethodHookOnce(messageDialog, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
                              (IMP)PBRTradingMessageDoneTap, &PBROriginalMessageDoneTap, &PBRMessageDoneHooked);
+    PBRInstallMethodHookOnce(messageDialog, NSSelectorFromString(@"textFieldShouldReturn:"),
+                             (IMP)PBRTradingMessageReturn, &PBROriginalMessageReturn, &PBRMessageReturnHooked);
+    PBRInstallMethodHookOnce(messageDialog, NSSelectorFromString(@"didMoveToWindow"),
+                             (IMP)PBRTradingMessageDidMoveToWindow,
+                             &PBROriginalMessageDidMoveToWindow, &PBRMessageDidMoveHooked);
 
     Class wishlistDialog = NSClassFromString(@"_TtC13PACYBITSFUT2021DialogTradingWishlist");
     PBRInstallMethodHookOnce(wishlistDialog, NSSelectorFromString(@"buttonTapHandlerWithGesture:"),
@@ -1191,6 +1231,36 @@ BOOL PBRStartOriginalNativeMatch(NSString *peerAlias) {
     }
 }
 
+
+void PBRReturnToTradingMenu(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *rememberedMenu = PBRLastTradingMenuController;
+        UINavigationController *rememberedNav = PBRLastTradingNavigationController ?: rememberedMenu.navigationController;
+        UITabBarController *rememberedTabs = PBRLastTradingTabController ?: rememberedMenu.tabBarController;
+
+        if (rememberedMenu && rememberedNav) {
+            if (rememberedTabs) rememberedTabs.selectedViewController = rememberedNav;
+            [rememberedNav popToViewController:rememberedMenu animated:NO];
+            PBRHealthBeacon(@"complete-return-trading-menu");
+            return;
+        }
+
+        Class menuClass = NSClassFromString(@"_TtC13PACYBITSFUT2025TradingMenuViewController");
+        UIWindow *window = [[PBRRevivalBootstrap shared] gameWindow];
+        UIViewController *menu = PBRFindControllerOfClassInTree(window.rootViewController, menuClass);
+        if (menu) {
+            UINavigationController *nav = menu.navigationController;
+            UITabBarController *tabs = menu.tabBarController;
+            if (tabs && nav) tabs.selectedViewController = nav;
+            if (nav) {
+                [nav popToViewController:menu animated:NO];
+                PBRHealthBeacon(@"complete-return-trading-menu");
+                return;
+            }
+        }
+        PBRHealthBeacon(@"complete-return-trading-menu-missing");
+    });
+}
 
 void PBRResetOriginalTradeState(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
